@@ -41,7 +41,16 @@ from tqdm import tqdm
 class QwenImageEditor:
     """Qwen 이미지 편집 모델을 사용한 오프라인 에디터"""
 
-    def __init__(self, model_path: str, device: str = None, torch_dtype=None, gpu_id: int = None, enable_cpu_offload: bool = False):
+    def __init__(
+        self,
+        model_path: str,
+        device: str = None,
+        torch_dtype=None,
+        gpu_id: int = None,
+        enable_cpu_offload: bool = False,
+        sequential_cpu_offload: bool = False,
+        lora_path: str = None
+    ):
         """
         Args:
             model_path: 로컬 모델 경로 또는 Hugging Face 모델 ID
@@ -49,9 +58,14 @@ class QwenImageEditor:
             torch_dtype: torch 데이터 타입 (기본값: bfloat16 for cuda, float32 for cpu)
             gpu_id: 사용할 GPU 인덱스 (멀티 GPU 환경에서 유용)
             enable_cpu_offload: CPU 오프로딩 사용 여부 (메모리 절약)
+            sequential_cpu_offload: Sequential CPU 오프로딩 (더 공격적인 메모리 절약)
+            lora_path: LoRA 가중치 경로 (Lightning LoRA 등)
         """
         self.model_path = model_path
         self.enable_cpu_offload = enable_cpu_offload
+        self.sequential_cpu_offload = sequential_cpu_offload
+        self.lora_path = lora_path
+        self.is_lightning = "lightning" in model_path.lower()
 
         # GPU ID가 지정된 경우 해당 GPU 사용
         if gpu_id is not None and torch.cuda.is_available():
@@ -81,8 +95,12 @@ class QwenImageEditor:
 
         print(f"\n디바이스: {self.device}")
         print(f"데이터 타입: {torch_dtype}")
-        if enable_cpu_offload:
+        if sequential_cpu_offload:
+            print(f"Sequential CPU 오프로딩: 활성화 (최대 메모리 절약 모드)")
+        elif enable_cpu_offload:
             print(f"CPU 오프로딩: 활성화 (메모리 절약 모드)")
+        if self.is_lightning:
+            print(f"Lightning 모델 감지: 4-step 최적화 모드")
         print(f"모델 로딩 중: {model_path}\n")
 
         # 파이프라인 로드
@@ -119,7 +137,11 @@ class QwenImageEditor:
 
             print("3/4: 모델을 GPU/CPU로 이동 중...")
             # CPU 오프로딩 또는 일반 디바이스 이동
-            if enable_cpu_offload and self.device == "cuda":
+            if sequential_cpu_offload and self.device == "cuda":
+                print("Sequential CPU 오프로딩 설정 중 (최대 메모리 절약)...")
+                self.pipeline.enable_sequential_cpu_offload()
+                print("Sequential CPU 오프로딩 활성화 완료")
+            elif enable_cpu_offload and self.device == "cuda":
                 print("CPU 오프로딩 설정 중 (GPU VRAM과 시스템 RAM을 균형있게 사용)...")
                 self.pipeline.enable_model_cpu_offload()
                 print("CPU 오프로딩 활성화 완료")
@@ -141,6 +163,20 @@ class QwenImageEditor:
                     pass
 
             self.pipeline.set_progress_bar_config(disable=False)
+
+            # LoRA 로딩 (있는 경우)
+            if lora_path:
+                print(f"\nLoRA 가중치 로딩 중: {lora_path}")
+                try:
+                    if os.path.exists(lora_path):
+                        self.pipeline.load_lora_weights(lora_path)
+                        print("LoRA 로딩 완료")
+                    else:
+                        self.pipeline.load_lora_weights(lora_path)
+                        print("LoRA 로딩 완료 (온라인)")
+                except Exception as e:
+                    print(f"경고: LoRA 로딩 실패 - {e}")
+                    print("기본 모델로 계속 진행합니다...")
 
             print("\n" + "=" * 60)
             print("모델 로딩 완료!")
@@ -180,6 +216,11 @@ class QwenImageEditor:
             num_images_per_prompt: 프롬프트당 생성할 이미지 수
         """
         try:
+            # Lightning 모델 자동 최적화
+            if self.is_lightning and num_inference_steps == 40:
+                num_inference_steps = 4
+                print(f"Lightning 모델 감지: 추론 스텝을 {num_inference_steps}로 자동 조정")
+
             # 이미지 로드
             if isinstance(image_path, (list, tuple)):
                 images = [Image.open(path).convert("RGB") for path in image_path]
@@ -362,6 +403,17 @@ def main():
         help="CPU 오프로딩 사용 (GPU VRAM과 시스템 RAM을 균형있게 사용, 메모리 절약)"
     )
     parser.add_argument(
+        "--sequential-cpu-offload",
+        action="store_true",
+        help="Sequential CPU 오프로딩 사용 (더 공격적인 메모리 절약, cpu-offload보다 느리지만 메모리 사용량 최소화)"
+    )
+    parser.add_argument(
+        "--lora-path",
+        type=str,
+        default=None,
+        help="LoRA 가중치 경로 (Lightning LoRA 등 추가 가중치 로딩)"
+    )
+    parser.add_argument(
         "--negative_prompt",
         type=str,
         default=" ",
@@ -432,7 +484,9 @@ def main():
         device=args.device,
         torch_dtype=torch_dtype,
         gpu_id=args.gpu_id,
-        enable_cpu_offload=args.cpu_offload
+        enable_cpu_offload=args.cpu_offload,
+        sequential_cpu_offload=args.sequential_cpu_offload,
+        lora_path=args.lora_path
     )
 
     # 이미지 편집

@@ -147,6 +147,37 @@ python image_editor.py \
   --output_folder ./edited_images
 ```
 
+### Lightning 모델 사용 (빠르고 메모리 효율적)
+
+Lightning 모델은 **4-step 추론**으로 **10배 빠르고** 메모리 사용량이 적습니다.
+
+#### 1. Lightning 모델 다운로드
+
+```bash
+python download_model.py \
+  --model_id lightx2v/Qwen-Image-Edit-2511-Lightning \
+  --save_path ./models/qwen-lightning
+```
+
+#### 2. Lightning 모델로 편집 (자동 최적화)
+
+```bash
+# Lightning 모델은 자동으로 4-step으로 최적화됩니다
+python image_editor.py \
+  --model_path ./models/qwen-lightning \
+  --image input.jpg \
+  --prompt "make it brighter" \
+  --output output.jpg \
+  --gpu_id 0 \
+  --dtype float16 \
+  --sequential-cpu-offload
+```
+
+**메모리 절약 옵션**:
+- `--sequential-cpu-offload`: 최대 메모리 절약 (24GB GPU에 권장)
+- `--cpu-offload`: 일반 메모리 절약
+- `--dtype float16`: FP16 정밀도 (메모리 절약)
+
 ## 사용 예시
 
 ### 예시 1: 배경 변경
@@ -233,8 +264,13 @@ python image_editor.py \
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
 | `--device` | auto | 디바이스 (cuda, cpu, mps) |
+| `--gpu_id` | None | 사용할 GPU 번호 (멀티 GPU 환경) |
+| `--dtype` | auto | 데이터 타입 (bfloat16, float16, float32) |
+| `--cpu-offload` | False | CPU 오프로딩 (메모리 절약) |
+| `--sequential-cpu-offload` | False | Sequential CPU 오프로딩 (최대 메모리 절약) |
+| `--lora-path` | None | LoRA 가중치 경로 |
 | `--negative_prompt` | " " | 네거티브 프롬프트 |
-| `--num_inference_steps` | 40 | 추론 스텝 수 (높을수록 품질 향상) |
+| `--num_inference_steps` | 40 | 추론 스텝 수 (Lightning: 자동 4) |
 | `--guidance_scale` | 1.0 | 가이던스 스케일 |
 | `--true_cfg_scale` | 4.0 | True CFG 스케일 |
 | `--seed` | None | 랜덤 시드 (재현성) |
