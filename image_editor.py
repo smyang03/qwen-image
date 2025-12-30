@@ -89,15 +89,13 @@ class QwenImageEditor:
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
                     torch_dtype=torch_dtype,
-                    local_files_only=True,
-                    variant="fp16" if torch_dtype == torch.float16 else None
+                    local_files_only=True
                 )
             else:
                 print("Hugging Face에서 모델 다운로드 중...")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    torch_dtype=torch_dtype,
-                    variant="fp16" if torch_dtype == torch.float16 else None
+                    torch_dtype=torch_dtype
                 )
 
             print("모델을 디바이스로 이동 중...")
