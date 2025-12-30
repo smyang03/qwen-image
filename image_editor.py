@@ -5,6 +5,31 @@ Qwen Image Edit Offline Editor
 """
 
 import os
+import sys
+
+# Windows 호환성: triton CUDA_PATH 에러 방지
+if sys.platform == "win32" and "CUDA_PATH" not in os.environ:
+    # CUDA_PATH가 설정되지 않은 경우 기본값 설정
+    # 일반적인 CUDA 설치 경로들을 확인
+    possible_cuda_paths = [
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6",
+    ]
+
+    cuda_path_found = False
+    for path in possible_cuda_paths:
+        if os.path.exists(path):
+            os.environ["CUDA_PATH"] = path
+            cuda_path_found = True
+            break
+
+    # CUDA 경로를 찾지 못한 경우 더미 경로 설정 (CPU 모드용)
+    if not cuda_path_found:
+        os.environ["CUDA_PATH"] = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
+
 import argparse
 from pathlib import Path
 from PIL import Image

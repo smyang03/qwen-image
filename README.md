@@ -181,6 +181,26 @@ qwen-image/
 
 ## 문제 해결
 
+### Windows에서 CUDA_PATH 에러
+
+```
+TypeError: expected str, bytes or os.PathLike object, not NoneType
+```
+
+**해결책**:
+이 에러는 이미 코드에서 자동으로 처리됩니다. 하지만 여전히 발생한다면:
+
+1. CUDA가 설치되어 있다면 환경 변수 설정:
+   ```cmd
+   setx CUDA_PATH "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
+   ```
+   (실제 CUDA 버전에 맞게 경로 수정)
+
+2. 또는 CPU 모드로 실행:
+   ```bash
+   python image_editor.py --device cpu --model_path ... --image ... --prompt ... --output ...
+   ```
+
 ### 모델 로딩 실패
 
 ```
