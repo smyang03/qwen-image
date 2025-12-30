@@ -9,10 +9,7 @@ huggingface-hub>=0.20.0
 # Progress bar
 tqdm>=4.65.0
 
-# Quantization (int8 지원)
-bitsandbytes>=0.41.0
-
-# Optional: Accelerate for faster inference
+# Optional: Accelerate for faster inference (CPU offloading 등)
 accelerate>=0.20.0
 
 # Optional: Transformers (일부 모델 구성 요소에서 사용)

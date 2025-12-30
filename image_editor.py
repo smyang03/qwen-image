@@ -41,17 +41,17 @@ from tqdm import tqdm
 class QwenImageEditor:
     """Qwen 이미지 편집 모델을 사용한 오프라인 에디터"""
 
-    def __init__(self, model_path: str, device: str = None, torch_dtype=None, gpu_id: int = None, use_int8: bool = False):
+    def __init__(self, model_path: str, device: str = None, torch_dtype=None, gpu_id: int = None, enable_cpu_offload: bool = False):
         """
         Args:
             model_path: 로컬 모델 경로 또는 Hugging Face 모델 ID
             device: 사용할 디바이스 (cuda, cpu 등). None이면 자동 선택
             torch_dtype: torch 데이터 타입 (기본값: bfloat16 for cuda, float32 for cpu)
             gpu_id: 사용할 GPU 인덱스 (멀티 GPU 환경에서 유용)
-            use_int8: int8 양자화 사용 여부 (메모리 절약)
+            enable_cpu_offload: CPU 오프로딩 사용 여부 (메모리 절약)
         """
         self.model_path = model_path
-        self.use_int8 = use_int8
+        self.enable_cpu_offload = enable_cpu_offload
 
         # GPU ID가 지정된 경우 해당 GPU 사용
         if gpu_id is not None and torch.cuda.is_available():
@@ -71,7 +71,7 @@ class QwenImageEditor:
                 print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
 
         # dtype 설정
-        if torch_dtype is None and not use_int8:
+        if torch_dtype is None:
             if self.device == "cuda":
                 torch_dtype = torch.bfloat16
             else:
@@ -80,44 +80,36 @@ class QwenImageEditor:
         self.torch_dtype = torch_dtype
 
         print(f"\n디바이스: {self.device}")
-        if use_int8:
-            print(f"양자화: int8 (메모리 절약 모드)")
-        else:
-            print(f"데이터 타입: {torch_dtype}")
+        print(f"데이터 타입: {torch_dtype}")
+        if enable_cpu_offload:
+            print(f"CPU 오프로딩: 활성화 (메모리 절약 모드)")
         print(f"모델 로딩 중: {model_path}\n")
 
         # 파이프라인 로드
         try:
-            # int8 양자화 설정
-            load_kwargs = {}
-            if use_int8:
-                from transformers import BitsAndBytesConfig
-                quantization_config = BitsAndBytesConfig(
-                    load_in_8bit=True,
-                    bnb_8bit_compute_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32
-                )
-                load_kwargs["quantization_config"] = quantization_config
-                print("int8 양자화 설정 적용 (메모리를 대폭 절약합니다)")
-            else:
-                load_kwargs["torch_dtype"] = torch_dtype
-
             # 로컬 경로가 존재하면 오프라인 모드로 로드
             if os.path.exists(model_path):
                 print("로컬 모델 사용 (오프라인 모드)")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    local_files_only=True,
-                    **load_kwargs
+                    torch_dtype=torch_dtype,
+                    local_files_only=True
                 )
             else:
                 print("Hugging Face에서 모델 다운로드 중...")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    **load_kwargs
+                    torch_dtype=torch_dtype
                 )
 
-            print("모델을 디바이스로 이동 중...")
-            self.pipeline.to(self.device)
+            # CPU 오프로딩 또는 일반 디바이스 이동
+            if enable_cpu_offload and self.device == "cuda":
+                print("CPU 오프로딩 설정 중 (GPU VRAM과 시스템 RAM을 균형있게 사용)...")
+                self.pipeline.enable_model_cpu_offload()
+                print("CPU 오프로딩 활성화 완료")
+            else:
+                print("모델을 디바이스로 이동 중...")
+                self.pipeline.to(self.device)
 
             # 메모리 최적화 옵션
             if self.device == "cuda":
@@ -337,9 +329,9 @@ def main():
         help="데이터 타입 (기본값: bfloat16 for GPU, float32 for CPU)"
     )
     parser.add_argument(
-        "--int8",
+        "--cpu-offload",
         action="store_true",
-        help="int8 양자화 사용 (메모리를 대폭 절약, RAM 64GB 이하에서 권장)"
+        help="CPU 오프로딩 사용 (GPU VRAM과 시스템 RAM을 균형있게 사용, 메모리 절약)"
     )
     parser.add_argument(
         "--negative_prompt",
@@ -412,7 +404,7 @@ def main():
         device=args.device,
         torch_dtype=torch_dtype,
         gpu_id=args.gpu_id,
-        use_int8=args.int8
+        enable_cpu_offload=args.cpu_offload
     )
 
     # 이미지 편집
