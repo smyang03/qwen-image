@@ -41,15 +41,17 @@ from tqdm import tqdm
 class QwenImageEditor:
     """Qwen 이미지 편집 모델을 사용한 오프라인 에디터"""
 
-    def __init__(self, model_path: str, device: str = None, torch_dtype=None, gpu_id: int = None):
+    def __init__(self, model_path: str, device: str = None, torch_dtype=None, gpu_id: int = None, use_int8: bool = False):
         """
         Args:
             model_path: 로컬 모델 경로 또는 Hugging Face 모델 ID
             device: 사용할 디바이스 (cuda, cpu 등). None이면 자동 선택
             torch_dtype: torch 데이터 타입 (기본값: bfloat16 for cuda, float32 for cpu)
             gpu_id: 사용할 GPU 인덱스 (멀티 GPU 환경에서 유용)
+            use_int8: int8 양자화 사용 여부 (메모리 절약)
         """
         self.model_path = model_path
+        self.use_int8 = use_int8
 
         # GPU ID가 지정된 경우 해당 GPU 사용
         if gpu_id is not None and torch.cuda.is_available():
@@ -69,7 +71,7 @@ class QwenImageEditor:
                 print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
 
         # dtype 설정
-        if torch_dtype is None:
+        if torch_dtype is None and not use_int8:
             if self.device == "cuda":
                 torch_dtype = torch.bfloat16
             else:
@@ -78,24 +80,40 @@ class QwenImageEditor:
         self.torch_dtype = torch_dtype
 
         print(f"\n디바이스: {self.device}")
-        print(f"데이터 타입: {torch_dtype}")
+        if use_int8:
+            print(f"양자화: int8 (메모리 절약 모드)")
+        else:
+            print(f"데이터 타입: {torch_dtype}")
         print(f"모델 로딩 중: {model_path}\n")
 
         # 파이프라인 로드
         try:
+            # int8 양자화 설정
+            load_kwargs = {}
+            if use_int8:
+                from transformers import BitsAndBytesConfig
+                quantization_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                    bnb_8bit_compute_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32
+                )
+                load_kwargs["quantization_config"] = quantization_config
+                print("int8 양자화 설정 적용 (메모리를 대폭 절약합니다)")
+            else:
+                load_kwargs["torch_dtype"] = torch_dtype
+
             # 로컬 경로가 존재하면 오프라인 모드로 로드
             if os.path.exists(model_path):
                 print("로컬 모델 사용 (오프라인 모드)")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    torch_dtype=torch_dtype,
-                    local_files_only=True
+                    local_files_only=True,
+                    **load_kwargs
                 )
             else:
                 print("Hugging Face에서 모델 다운로드 중...")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    torch_dtype=torch_dtype
+                    **load_kwargs
                 )
 
             print("모델을 디바이스로 이동 중...")
@@ -319,6 +337,11 @@ def main():
         help="데이터 타입 (기본값: bfloat16 for GPU, float32 for CPU)"
     )
     parser.add_argument(
+        "--int8",
+        action="store_true",
+        help="int8 양자화 사용 (메모리를 대폭 절약, RAM 64GB 이하에서 권장)"
+    )
+    parser.add_argument(
         "--negative_prompt",
         type=str,
         default=" ",
@@ -388,7 +411,8 @@ def main():
         args.model_path,
         device=args.device,
         torch_dtype=torch_dtype,
-        gpu_id=args.gpu_id
+        gpu_id=args.gpu_id,
+        use_int8=args.int8
     )
 
     # 이미지 편집
