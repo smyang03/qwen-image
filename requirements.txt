@@ -9,6 +9,9 @@ huggingface-hub>=0.20.0
 # Progress bar
 tqdm>=4.65.0
 
+# Quantization (int8 지원)
+bitsandbytes>=0.41.0
+
 # Optional: Accelerate for faster inference
 accelerate>=0.20.0
 
