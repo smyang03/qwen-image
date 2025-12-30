@@ -274,6 +274,22 @@ TypeError: expected str, bytes or os.PathLike object, not NoneType
    python image_editor.py --device cpu --model_path ... --image ... --prompt ... --output ...
    ```
 
+### 모델 다운로드 중 MemoryError
+
+```
+MemoryError
+```
+
+**원인**: 모델이 너무 커서 메모리에 모두 로드할 수 없습니다.
+
+**해결책**:
+이 에러는 이미 수정되었습니다. 최신 코드를 pull하세요:
+```bash
+git pull origin claude/offline-image-editor-ircBo
+```
+
+새 버전은 `snapshot_download`를 사용하여 메모리를 적게 사용합니다.
+
 ### 모델 로딩 실패
 
 ```
@@ -281,9 +297,13 @@ TypeError: expected str, bytes or os.PathLike object, not NoneType
 ```
 
 **해결책**:
-1. 모델이 올바르게 다운로드되었는지 확인
-2. `--model_path`가 정확한지 확인
-3. 디스크 공간이 충분한지 확인
+1. 먼저 모델을 다운로드하세요:
+   ```bash
+   python download_model.py --model_id Qwen/Qwen-Image-Edit-2511 --save_path ./models/qwen-image-edit
+   ```
+2. 모델이 올바르게 다운로드되었는지 확인
+3. `--model_path`가 정확한지 확인
+4. 디스크 공간이 충분한지 확인 (60GB+ 권장)
 
 ### CUDA 메모리 부족
 
