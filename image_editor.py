@@ -87,37 +87,65 @@ class QwenImageEditor:
 
         # 파이프라인 로드
         try:
+            print("=" * 60)
+            print("안전 모드로 모델 로딩을 시작합니다...")
+            print("=" * 60)
+
             # 로컬 경로가 존재하면 오프라인 모드로 로드
             if os.path.exists(model_path):
-                print("로컬 모델 사용 (오프라인 모드)")
+                print("로컬 모델 사용 (오프라인 모드)\n")
+
+                # 더 안전한 로딩을 위한 추가 옵션
+                print("1/4: 파이프라인 설정 준비 중...")
+                load_kwargs = {
+                    "torch_dtype": torch_dtype,
+                    "local_files_only": True,
+                    "low_cpu_mem_usage": True,  # 메모리 효율적 로딩
+                    "use_safetensors": True,     # safetensors 우선 사용
+                }
+
+                print("2/4: 모델 파일 로딩 중 (시간이 걸릴 수 있습니다)...")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    torch_dtype=torch_dtype,
-                    local_files_only=True
+                    **load_kwargs
                 )
             else:
                 print("Hugging Face에서 모델 다운로드 중...")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    torch_dtype=torch_dtype
+                    torch_dtype=torch_dtype,
+                    low_cpu_mem_usage=True
                 )
 
+            print("3/4: 모델을 GPU/CPU로 이동 중...")
             # CPU 오프로딩 또는 일반 디바이스 이동
             if enable_cpu_offload and self.device == "cuda":
                 print("CPU 오프로딩 설정 중 (GPU VRAM과 시스템 RAM을 균형있게 사용)...")
                 self.pipeline.enable_model_cpu_offload()
                 print("CPU 오프로딩 활성화 완료")
             else:
-                print("모델을 디바이스로 이동 중...")
+                print(f"모델을 {self.device}로 이동 중...")
                 self.pipeline.to(self.device)
 
+            print("4/4: 메모리 최적화 설정 중...")
             # 메모리 최적화 옵션
             if self.device == "cuda":
                 self.pipeline.enable_attention_slicing(1)
                 print("Attention slicing 활성화 (메모리 최적화)")
 
+                # VAE slicing도 활성화 (추가 메모리 절약)
+                try:
+                    self.pipeline.enable_vae_slicing()
+                    print("VAE slicing 활성화 (메모리 최적화)")
+                except:
+                    pass
+
             self.pipeline.set_progress_bar_config(disable=False)
-            print("모델 로딩 완료!\n")
+
+            print("\n" + "=" * 60)
+            print("모델 로딩 완료!")
+            print("=" * 60)
+            print()
 
         except Exception as e:
             print(f"에러: 모델 로딩 실패 - {e}")
