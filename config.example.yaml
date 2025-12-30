@@ -1,0 +1,30 @@
+# Qwen Image Edit 설정 파일 예시
+# 이 파일을 config.yaml로 복사하여 사용하세요
+
+# 모델 설정
+model:
+  # 로컬 모델 경로 (절대 경로 또는 상대 경로)
+  path: "./models/qwen-image-edit"
+
+  # 디바이스 설정 (cuda, cpu, mps, 또는 auto)
+  device: "auto"
+
+# 입출력 설정
+input:
+  # 단일 이미지 또는 폴더
+  # image: "input.jpg"
+  folder: "./images"
+
+output:
+  # 단일 이미지 또는 폴더
+  # image: "output.jpg"
+  folder: "./edited_images"
+
+# 편집 프롬프트
+prompt: "이미지를 밝고 선명하게 만들어주세요"
+
+# 생성 파라미터
+generation:
+  max_new_tokens: 1024
+  do_sample: false
+  # temperature: 0.7  # do_sample이 true일 때만 사용

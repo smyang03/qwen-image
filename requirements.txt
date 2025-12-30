@@ -1,0 +1,15 @@
+# Qwen Image Edit Offline Editor Requirements
+
+# Core dependencies
+torch>=2.0.0
+transformers>=4.37.0
+Pillow>=10.0.0
+
+# Progress bar
+tqdm>=4.65.0
+
+# Optional: Accelerate for faster inference
+accelerate>=0.20.0
+
+# Optional: CUDA support (uncomment if using GPU)
+# torchvision>=0.15.0
