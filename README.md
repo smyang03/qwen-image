@@ -195,15 +195,29 @@ python image_editor.py \
   --dtype bfloat16
 ```
 
-#### 멀티 GPU 병렬 처리
+#### 멀티 GPU - Model Parallelism (VRAM 공유)
 
 ```bash
+# 모델이 48GB보다 큰 경우 여러 GPU에 모델 분산
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --image input.jpg \
+  --prompt "enhance quality and details" \
+  --output output.jpg \
+  --multi-gpu-model \
+  --dtype bfloat16
+```
+
+#### 멀티 GPU - Data Parallelism (배치 병렬 처리)
+
+```bash
+# 대량 이미지를 8개 GPU로 병렬 처리
 python image_editor.py \
   --model_path ./models/qwen-image-edit \
   --input_folder ./images \
   --prompt "enhance quality and details" \
   --output_folder ./edited_images \
-  --multi-gpu \
+  --multi-gpu-data \
   --dtype bfloat16
 ```
 
@@ -223,7 +237,8 @@ python image_editor.py \
 
 **A6000 최적화 옵션**:
 - `--dtype bfloat16`: A6000에 최적화된 데이터 타입 (기본값)
-- `--multi-gpu`: 8장 GPU 병렬 처리 (대규모 배치용)
+- `--multi-gpu-model`: Model Parallelism (모델이 48GB 초과 시 VRAM 공유)
+- `--multi-gpu-data`: Data Parallelism (대량 배치 처리, 8배 속도 향상)
 - `--gpu_id 0-7`: 특정 GPU 선택 (0부터 7까지)
 
 ## 사용 예시
@@ -314,7 +329,8 @@ python image_editor.py \
 | `--device` | auto | 디바이스 (cuda, cpu) |
 | `--gpu_id` | None | 사용할 GPU 번호 (0-7, A6000 8장 환경) |
 | `--dtype` | bfloat16 | 데이터 타입 (bfloat16, float16, float32) |
-| `--multi-gpu` | False | 멀티 GPU 병렬 처리 (대규모 배치용) |
+| `--multi-gpu-model` | False | Model Parallelism: 모델을 여러 GPU에 분산 (VRAM 공유) |
+| `--multi-gpu-data` | False | Data Parallelism: 배치를 여러 GPU에 분산 (병렬 추론) |
 | `--cpu-offload` | False | CPU 오프로딩 (A6000 48GB에서는 불필요) |
 | `--sequential-cpu-offload` | False | Sequential CPU 오프로딩 (A6000에서는 불필요) |
 | `--lora-path` | None | LoRA 가중치 경로 (선택) |
@@ -458,19 +474,36 @@ python image_editor.py \
 - **처리 속도**: 이미지당 약 10-15초
 - **권장 배치 크기**: 100-500장
 
-### 멀티 GPU 병렬 처리 (A6000 2-8장)
+### 멀티 GPU - Data Parallelism (A6000 2-8장)
 ```bash
+# 대량 배치를 여러 GPU로 병렬 처리
 python image_editor.py \
   --model_path ./models/qwen-image-edit \
   --input_folder ./large_dataset \
   --prompt "professional enhancement" \
   --output_folder ./output \
-  --multi-gpu \
+  --multi-gpu-data \
   --dtype bfloat16
 ```
-- **메모리 사용량**: GPU당 ~25-30GB VRAM
-- **처리 속도**: GPU 수에 비례하여 증가
+- **메모리 사용량**: GPU당 ~35-40GB VRAM
+- **처리 속도**: GPU 수에 비례하여 증가 (8 GPU = 8배 빠름)
 - **권장 배치 크기**: 1000-10000장
+- **최적 환경**: A6000 8장 서버
+
+### 멀티 GPU - Model Parallelism (모델이 큰 경우)
+```bash
+# 모델을 여러 GPU에 자동 분산 (VRAM 부족 시)
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --image input.jpg \
+  --prompt "enhance quality" \
+  --output output.jpg \
+  --multi-gpu-model \
+  --dtype bfloat16
+```
+- **메모리 사용량**: GPU당 균등 분산 (예: 60GB 모델 → 각 GPU 30GB)
+- **처리 속도**: 단일 GPU와 유사하지만 큰 모델 로드 가능
+- **권장 사용**: 모델 크기가 48GB 초과 시
 
 ### 최대 성능 설정
 ```bash
