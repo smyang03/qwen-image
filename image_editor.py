@@ -1,35 +1,10 @@
 #!/usr/bin/env python3
 """
-Qwen Image Edit Offline Editor
-이미지 편집을 위한 오프라인 스크립트
+Qwen Image Edit Offline Editor - Linux Server Edition
+A6000 GPU (48GB VRAM x 8) 최적화 버전
 """
 
 import os
-import sys
-
-# Windows 호환성: triton CUDA_PATH 에러 방지
-if sys.platform == "win32" and "CUDA_PATH" not in os.environ:
-    # CUDA_PATH가 설정되지 않은 경우 기본값 설정
-    # 일반적인 CUDA 설치 경로들을 확인
-    possible_cuda_paths = [
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1",
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0",
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8",
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7",
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6",
-    ]
-
-    cuda_path_found = False
-    for path in possible_cuda_paths:
-        if os.path.exists(path):
-            os.environ["CUDA_PATH"] = path
-            cuda_path_found = True
-            break
-
-    # CUDA 경로를 찾지 못한 경우 더미 경로 설정 (CPU 모드용)
-    if not cuda_path_found:
-        os.environ["CUDA_PATH"] = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
-
 import argparse
 from pathlib import Path
 from PIL import Image
@@ -49,22 +24,25 @@ class QwenImageEditor:
         gpu_id: int = None,
         enable_cpu_offload: bool = False,
         sequential_cpu_offload: bool = False,
-        lora_path: str = None
+        lora_path: str = None,
+        multi_gpu: bool = False
     ):
         """
         Args:
             model_path: 로컬 모델 경로 또는 Hugging Face 모델 ID
             device: 사용할 디바이스 (cuda, cpu 등). None이면 자동 선택
-            torch_dtype: torch 데이터 타입 (기본값: bfloat16 for cuda, float32 for cpu)
-            gpu_id: 사용할 GPU 인덱스 (멀티 GPU 환경에서 유용)
-            enable_cpu_offload: CPU 오프로딩 사용 여부 (메모리 절약)
-            sequential_cpu_offload: Sequential CPU 오프로딩 (더 공격적인 메모리 절약)
-            lora_path: LoRA 가중치 경로 (Lightning LoRA 등)
+            torch_dtype: torch 데이터 타입 (기본값: bfloat16 for A6000)
+            gpu_id: 사용할 GPU 인덱스 (0-7, None이면 자동 선택)
+            enable_cpu_offload: CPU 오프로딩 (A6000 48GB에서는 불필요)
+            sequential_cpu_offload: Sequential CPU 오프로딩 (A6000에서는 불필요)
+            lora_path: LoRA 가중치 경로
+            multi_gpu: 멀티 GPU 병렬 처리 (DataParallel)
         """
         self.model_path = model_path
         self.enable_cpu_offload = enable_cpu_offload
         self.sequential_cpu_offload = sequential_cpu_offload
         self.lora_path = lora_path
+        self.multi_gpu = multi_gpu
         self.is_lightning = "lightning" in model_path.lower()
 
         # GPU ID가 지정된 경우 해당 GPU 사용
@@ -80,23 +58,34 @@ class QwenImageEditor:
 
         # 멀티 GPU 정보 출력
         if torch.cuda.is_available():
-            print(f"사용 가능한 GPU 수: {torch.cuda.device_count()}")
-            for i in range(torch.cuda.device_count()):
-                print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+            gpu_count = torch.cuda.device_count()
+            print(f"\n{'='*60}")
+            print(f"GPU 환경 정보")
+            print(f"{'='*60}")
+            print(f"사용 가능한 GPU 수: {gpu_count}")
+            for i in range(gpu_count):
+                gpu_name = torch.cuda.get_device_name(i)
+                gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                print(f"  GPU {i}: {gpu_name} ({gpu_memory:.1f} GB)")
+            if multi_gpu and gpu_count > 1:
+                print(f"멀티 GPU 모드: {gpu_count}개 GPU 병렬 처리")
+            print(f"{'='*60}\n")
 
-        # dtype 설정
+        # dtype 설정 (A6000 최적화: bfloat16 기본)
         if torch_dtype is None:
             if self.device == "cuda":
-                torch_dtype = torch.bfloat16
+                torch_dtype = torch.bfloat16  # A6000에 최적화
             else:
                 torch_dtype = torch.float32
 
         self.torch_dtype = torch_dtype
 
-        print(f"\n디바이스: {self.device}")
+        print(f"디바이스: {self.device}")
         print(f"데이터 타입: {torch_dtype}")
+        if multi_gpu:
+            print(f"멀티 GPU 병렬 처리: 활성화")
         if sequential_cpu_offload:
-            print(f"Sequential CPU 오프로딩: 활성화 (최대 메모리 절약 모드)")
+            print(f"Sequential CPU 오프로딩: 활성화 (메모리 절약 모드)")
         elif enable_cpu_offload:
             print(f"CPU 오프로딩: 활성화 (메모리 절약 모드)")
         if self.is_lightning:
@@ -408,6 +397,11 @@ def main():
         help="Sequential CPU 오프로딩 사용 (더 공격적인 메모리 절약, cpu-offload보다 느리지만 메모리 사용량 최소화)"
     )
     parser.add_argument(
+        "--multi-gpu",
+        action="store_true",
+        help="멀티 GPU 병렬 처리 (A6000 8장 환경에 최적화)"
+    )
+    parser.add_argument(
         "--lora-path",
         type=str,
         default=None,
@@ -486,7 +480,8 @@ def main():
         gpu_id=args.gpu_id,
         enable_cpu_offload=args.cpu_offload,
         sequential_cpu_offload=args.sequential_cpu_offload,
-        lora_path=args.lora_path
+        lora_path=args.lora_path,
+        multi_gpu=args.multi_gpu
     )
 
     # 이미지 편집
