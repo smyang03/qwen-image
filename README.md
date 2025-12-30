@@ -9,7 +9,67 @@
 ✅ **간단한 사용법**: 커맨드라인 인터페이스로 쉽게 사용
 ✅ **유연한 설정**: 프롬프트, 입출력 경로 자유롭게 설정
 
+## 시스템 요구사항
+
+### 하드웨어 요구사항
+
+#### GPU (권장)
+- **최소**: NVIDIA GPU 12GB VRAM (GGUF 양자화 사용 시)
+- **권장**: NVIDIA GPU 24GB VRAM (RTX 4090, RTX 5080 등)
+- **최적**: NVIDIA GPU 40GB+ VRAM (A100, RTX 5090 등)
+
+#### CPU 모드
+- CPU에서도 실행 가능하지만 매우 느립니다
+- RAM: 16GB 이상 권장
+
+#### 디스크 공간
+- **모델 저장**: 약 10-60GB (모델 변형에 따라 다름)
+- **작업 공간**: 추가 10GB 이상 권장
+
+### 소프트웨어 요구사항
+
+#### CUDA (GPU 사용 시)
+- **권장**: CUDA 11.8 이상 (12.x 지원)
+- **최소**: CUDA 11.7
+- PyTorch 2.0+는 CUDA 11.7 미만을 지원하지 않습니다
+
+#### Python
+- **권장**: Python 3.8 - 3.11
+- **필수 라이브러리**:
+  - PyTorch 2.0+
+  - diffusers >= 0.30.0
+  - transformers >= 4.37.0
+  - Pillow, tqdm, accelerate
+
+### Hugging Face 토큰
+
+**Qwen-Image-Edit-2511은 공개 모델이므로 Hugging Face 토큰이 필요하지 않습니다.**
+
+단, 다운로드 속도 제한을 피하려면 토큰 사용을 권장합니다:
+
+```bash
+# 선택사항: Hugging Face 로그인
+pip install huggingface-hub
+huggingface-cli login
+```
+
 ## 설치
+
+### 0. CUDA 설치 (GPU 사용 시)
+
+GPU를 사용하려면 먼저 NVIDIA CUDA Toolkit을 설치하세요:
+
+- **Windows**: [CUDA Toolkit Download](https://developer.nvidia.com/cuda-downloads)
+- **Linux**:
+  ```bash
+  # Ubuntu/Debian 예시
+  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+  sudo dpkg -i cuda-keyring_1.1-1_all.deb
+  sudo apt-get update
+  sudo apt-get -y install cuda-toolkit-12-1
+  ```
+
+**권장 버전**: CUDA 11.8 또는 12.1
 
 ### 1. 저장소 클론
 
@@ -27,7 +87,20 @@ source venv/bin/activate  # Linux/Mac
 venv\Scripts\activate  # Windows
 ```
 
-### 3. 의존성 설치
+### 3. PyTorch 설치 (CUDA 버전에 맞게)
+
+```bash
+# CUDA 12.1 사용 시
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# CUDA 11.8 사용 시
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# CPU만 사용 시
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+```
+
+### 4. 의존성 설치
 
 ```bash
 # 기본 의존성 설치
@@ -262,6 +335,25 @@ RuntimeError: CUDA out of memory
 - **설명**: 랜덤 시드 고정
 - **사용 목적**: 동일한 결과 재현
 - **예시**: `--seed 42`
+
+## GPU VRAM별 최적화 팁
+
+### 12-16GB VRAM (RTX 3060, RTX 4060 Ti 등)
+- 모델을 bfloat16으로 로드 (기본값)
+- 필요시 `--num_inference_steps 30`으로 감소
+- 한 번에 하나의 이미지만 처리
+
+### 24GB VRAM (RTX 3090, RTX 4090 등)
+- 기본 설정 사용
+- 배치 처리 가능
+- `--num_inference_steps 50`까지 가능
+
+### 8GB 이하 VRAM
+- CPU 모드 사용 권장:
+  ```bash
+  python image_editor.py --device cpu ...
+  ```
+- 또는 양자화된 모델 사용 고려 (GGUF, FP8)
 
 ## 참고 링크
 
