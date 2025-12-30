@@ -2,7 +2,7 @@
 
 # Core dependencies
 torch>=2.0.0
-transformers>=4.37.0
+diffusers>=0.30.0
 Pillow>=10.0.0
 
 # Progress bar
@@ -11,5 +11,11 @@ tqdm>=4.65.0
 # Optional: Accelerate for faster inference
 accelerate>=0.20.0
 
-# Optional: CUDA support (uncomment if using GPU)
-# torchvision>=0.15.0
+# Optional: Transformers (일부 모델 구성 요소에서 사용)
+transformers>=4.37.0
+
+# 참고:
+# - GPU를 사용하려면 CUDA가 설치된 PyTorch를 사용하세요
+# - CPU만 사용하는 경우 기본 torch로 충분합니다
+# - diffusers 라이브러리 최신 버전 설치:
+#   pip install git+https://github.com/huggingface/diffusers

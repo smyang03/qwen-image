@@ -30,7 +30,11 @@ venv\Scripts\activate  # Windows
 ### 3. 의존성 설치
 
 ```bash
+# 기본 의존성 설치
 pip install -r requirements.txt
+
+# diffusers 최신 버전 설치 (권장)
+pip install git+https://github.com/huggingface/diffusers
 ```
 
 ## 사용 방법
@@ -121,11 +125,23 @@ python image_editor.py \
 python image_editor.py \
   --model_path ./models/qwen-image-edit \
   --image input.jpg \
-  --prompt "편집 프롬프트" \
+  --prompt "선명하게 만들어주세요" \
   --output output.jpg \
-  --max_new_tokens 2048 \
-  --do_sample \
-  --temperature 0.7
+  --num_inference_steps 50 \
+  --true_cfg_scale 5.0 \
+  --guidance_scale 1.0 \
+  --seed 42
+```
+
+### 네거티브 프롬프트 사용
+
+```bash
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --image input.jpg \
+  --prompt "아름다운 풍경" \
+  --output output.jpg \
+  --negative_prompt "흐릿한, 저품질, 왜곡된"
 ```
 
 ## 명령줄 옵션
@@ -144,9 +160,12 @@ python image_editor.py \
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
 | `--device` | auto | 디바이스 (cuda, cpu, mps) |
-| `--max_new_tokens` | 1024 | 최대 생성 토큰 수 |
-| `--temperature` | - | 샘플링 온도 |
-| `--do_sample` | False | 샘플링 사용 여부 |
+| `--negative_prompt` | " " | 네거티브 프롬프트 |
+| `--num_inference_steps` | 40 | 추론 스텝 수 (높을수록 품질 향상) |
+| `--guidance_scale` | 1.0 | 가이던스 스케일 |
+| `--true_cfg_scale` | 4.0 | True CFG 스케일 |
+| `--seed` | None | 랜덤 시드 (재현성) |
+| `--num_images` | 1 | 생성할 이미지 수 |
 
 ## 프로젝트 구조
 
@@ -199,10 +218,35 @@ RuntimeError: CUDA out of memory
 이 프로젝트는 Qwen-Image-Edit-2511 모델을 사용합니다.
 모델의 라이선스는 [Hugging Face 모델 페이지](https://huggingface.co/Qwen/Qwen-Image-Edit-2511)를 참조하세요.
 
+## 파라미터 가이드
+
+### num_inference_steps
+- **설명**: 디퓨전 프로세스의 스텝 수
+- **범위**: 20-100
+- **권장값**: 40 (기본값)
+- **효과**: 높을수록 품질이 향상되지만 속도가 느려짐
+
+### true_cfg_scale
+- **설명**: True Classifier-Free Guidance 스케일
+- **범위**: 1.0-10.0
+- **권장값**: 4.0 (기본값)
+- **효과**: 프롬프트 충실도 조절
+
+### guidance_scale
+- **설명**: 기본 가이던스 스케일
+- **범위**: 0.0-20.0
+- **권장값**: 1.0 (기본값)
+- **효과**: 프롬프트와 이미지의 균형 조절
+
+### seed
+- **설명**: 랜덤 시드 고정
+- **사용 목적**: 동일한 결과 재현
+- **예시**: `--seed 42`
+
 ## 참고 링크
 
 - [Qwen-Image-Edit-2511 모델](https://huggingface.co/Qwen/Qwen-Image-Edit-2511)
-- [Transformers 문서](https://huggingface.co/docs/transformers)
+- [Diffusers 문서](https://huggingface.co/docs/diffusers)
 - [PyTorch 문서](https://pytorch.org/docs/)
 
 ## 기여
