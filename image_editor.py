@@ -41,20 +41,32 @@ from tqdm import tqdm
 class QwenImageEditor:
     """Qwen 이미지 편집 모델을 사용한 오프라인 에디터"""
 
-    def __init__(self, model_path: str, device: str = None, torch_dtype=None):
+    def __init__(self, model_path: str, device: str = None, torch_dtype=None, gpu_id: int = None):
         """
         Args:
             model_path: 로컬 모델 경로 또는 Hugging Face 모델 ID
             device: 사용할 디바이스 (cuda, cpu 등). None이면 자동 선택
             torch_dtype: torch 데이터 타입 (기본값: bfloat16 for cuda, float32 for cpu)
+            gpu_id: 사용할 GPU 인덱스 (멀티 GPU 환경에서 유용)
         """
         self.model_path = model_path
+
+        # GPU ID가 지정된 경우 해당 GPU 사용
+        if gpu_id is not None and torch.cuda.is_available():
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+            print(f"GPU {gpu_id} 사용으로 설정")
 
         # 디바이스 설정
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
             self.device = device
+
+        # 멀티 GPU 정보 출력
+        if torch.cuda.is_available():
+            print(f"사용 가능한 GPU 수: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
 
         # dtype 설정
         if torch_dtype is None:
@@ -63,9 +75,11 @@ class QwenImageEditor:
             else:
                 torch_dtype = torch.float32
 
-        print(f"디바이스: {self.device}")
+        self.torch_dtype = torch_dtype
+
+        print(f"\n디바이스: {self.device}")
         print(f"데이터 타입: {torch_dtype}")
-        print(f"모델 로딩 중: {model_path}")
+        print(f"모델 로딩 중: {model_path}\n")
 
         # 파이프라인 로드
         try:
@@ -75,18 +89,27 @@ class QwenImageEditor:
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
                     torch_dtype=torch_dtype,
-                    local_files_only=True
+                    local_files_only=True,
+                    variant="fp16" if torch_dtype == torch.float16 else None
                 )
             else:
                 print("Hugging Face에서 모델 다운로드 중...")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    torch_dtype=torch_dtype
+                    torch_dtype=torch_dtype,
+                    variant="fp16" if torch_dtype == torch.float16 else None
                 )
 
+            print("모델을 디바이스로 이동 중...")
             self.pipeline.to(self.device)
+
+            # 메모리 최적화 옵션
+            if self.device == "cuda":
+                self.pipeline.enable_attention_slicing(1)
+                print("Attention slicing 활성화 (메모리 최적화)")
+
             self.pipeline.set_progress_bar_config(disable=False)
-            print("모델 로딩 완료!")
+            print("모델 로딩 완료!\n")
 
         except Exception as e:
             print(f"에러: 모델 로딩 실패 - {e}")
@@ -285,6 +308,19 @@ def main():
         help="사용할 디바이스 (기본값: 자동 선택)"
     )
     parser.add_argument(
+        "--gpu_id",
+        type=int,
+        default=None,
+        help="사용할 GPU 번호 (멀티 GPU 환경에서 특정 GPU 지정, 예: 0 또는 1)"
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default=None,
+        choices=["bfloat16", "float16", "float32"],
+        help="데이터 타입 (기본값: bfloat16 for GPU, float32 for CPU)"
+    )
+    parser.add_argument(
         "--negative_prompt",
         type=str,
         default=" ",
@@ -329,6 +365,16 @@ def main():
     if args.input_folder and not args.output_folder:
         parser.error("--input_folder 사용 시 --output_folder가 필요합니다")
 
+    # dtype 설정
+    torch_dtype = None
+    if args.dtype:
+        if args.dtype == "bfloat16":
+            torch_dtype = torch.bfloat16
+        elif args.dtype == "float16":
+            torch_dtype = torch.float16
+        elif args.dtype == "float32":
+            torch_dtype = torch.float32
+
     # 생성 파라미터
     generation_kwargs = {
         "negative_prompt": args.negative_prompt,
@@ -340,7 +386,12 @@ def main():
     }
 
     # 에디터 초기화
-    editor = QwenImageEditor(args.model_path, args.device)
+    editor = QwenImageEditor(
+        args.model_path,
+        device=args.device,
+        torch_dtype=torch_dtype,
+        gpu_id=args.gpu_id
+    )
 
     # 이미지 편집
     if args.image:
