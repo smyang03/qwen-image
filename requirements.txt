@@ -1,22 +1,45 @@
-# Qwen Image Edit Offline Editor Requirements
+# Qwen Image Edit Offline Editor - Server Edition
+# A6000 GPU (48GB VRAM x 8) Linux Server Requirements
 
 # Core dependencies
 torch>=2.0.0
 diffusers>=0.30.0
+transformers>=4.37.0
+accelerate>=0.20.0
+
+# Image processing
 Pillow>=10.0.0
+
+# HuggingFace
 huggingface-hub>=0.20.0
 
 # Progress bar
 tqdm>=4.65.0
 
-# Optional: Accelerate for faster inference (CPU offloading 등)
-accelerate>=0.20.0
+# Optional: For better performance
+ninja  # For faster CUDA compilation
+xformers  # Memory efficient attention (optional)
 
-# Optional: Transformers (일부 모델 구성 요소에서 사용)
-transformers>=4.37.0
-
-# 참고:
-# - GPU를 사용하려면 CUDA가 설치된 PyTorch를 사용하세요
-# - CPU만 사용하는 경우 기본 torch로 충분합니다
-# - diffusers 라이브러리 최신 버전 설치:
-#   pip install git+https://github.com/huggingface/diffusers
+# Installation Instructions:
+#
+# 1. PyTorch with CUDA (필수):
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#    또는
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#
+# 2. Diffusers 최신 버전 (권장):
+#    pip install git+https://github.com/huggingface/diffusers
+#
+# 3. 나머지 의존성:
+#    pip install -r requirements.txt
+#
+# 4. xformers (선택, 메모리 최적화):
+#    pip install xformers
+#
+# System Requirements:
+# - OS: Linux (Ubuntu 20.04+, CentOS 8+ 권장)
+# - CUDA: 11.8+ 또는 12.x
+# - Driver: NVIDIA Driver 525+ (CUDA 12.x) 또는 470+ (CUDA 11.x)
+# - GPU: NVIDIA A6000 (48GB VRAM) x 8
+# - RAM: 256GB+ 권장
+# - Storage: NVMe SSD 1TB+ (모델 저장 및 빠른 I/O)

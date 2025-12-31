@@ -1,75 +1,85 @@
-# Qwen Image Edit - Offline Editor
+# Qwen Image Edit - Offline Editor (Linux Server Edition)
 
 [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) 모델 기반 오프라인 이미지 편집기
+**A6000 GPU (48GB VRAM x 8) Linux Server 최적화 버전**
 
 ## 주요 기능
 
 ✅ **완전한 오프라인 동작**: 모델을 한 번 다운로드하면 인터넷 없이 사용 가능
 ✅ **배치 처리**: 폴더 내 모든 이미지를 한 번에 편집
-✅ **간단한 사용법**: 커맨드라인 인터페이스로 쉽게 사용
-✅ **유연한 설정**: 프롬프트, 입출력 경로 자유롭게 설정
+✅ **멀티 GPU 지원**: A6000 8장 병렬 처리 지원
+✅ **서버 최적화**: Linux 환경, 대용량 배치 처리에 최적화
+✅ **유연한 설정**: 프롬프트, 입출력 경로, GPU 선택 자유롭게 설정
 
 ## 시스템 요구사항
 
-### 하드웨어 요구사항
+### 하드웨어 요구사항 (검증된 환경)
 
-#### GPU (권장)
-- **최소**: NVIDIA GPU 12GB VRAM (GGUF 양자화 사용 시)
-- **권장**: NVIDIA GPU 24GB VRAM (RTX 4090, RTX 5080 등)
-- **최적**: NVIDIA GPU 40GB+ VRAM (A100, RTX 5090 등)
+#### GPU
+- **구성**: NVIDIA A6000 48GB VRAM x 8장
+- **최소**: A6000 1장 (48GB VRAM)
+- **권장**: A6000 2장 이상 (멀티 GPU 병렬 처리)
+- **최적**: A6000 4-8장 (대용량 배치 처리)
 
-#### CPU 모드
-- CPU에서도 실행 가능하지만 매우 느립니다
-- RAM: 16GB 이상 권장
+#### 시스템
+- **RAM**: 256GB 이상 권장
+- **Storage**: NVMe SSD 1TB 이상 (모델 저장 및 빠른 I/O)
+- **CPU**: 멀티코어 프로세서 (Xeon 또는 EPYC 권장)
 
 #### 디스크 공간
-- **모델 저장**: 약 10-60GB (모델 변형에 따라 다름)
-- **작업 공간**: 추가 10GB 이상 권장
+- **모델 저장**: 약 60GB (Qwen-Image-Edit-2511)
+- **작업 공간**: 추가 100GB 이상 권장 (배치 처리용)
 
 ### 소프트웨어 요구사항
 
-#### CUDA (GPU 사용 시)
-- **권장**: CUDA 11.8 이상 (12.x 지원)
-- **최소**: CUDA 11.7
-- PyTorch 2.0+는 CUDA 11.7 미만을 지원하지 않습니다
+#### OS
+- **권장**: Ubuntu 20.04 LTS, Ubuntu 22.04 LTS
+- **지원**: CentOS 8+, Red Hat Enterprise Linux 8+
+- **필수**: Linux Kernel 5.4+
+
+#### CUDA & Driver
+- **CUDA**: 11.8 또는 12.x (12.1 권장)
+- **Driver**:
+  - CUDA 12.x: NVIDIA Driver 525 이상
+  - CUDA 11.8: NVIDIA Driver 470 이상
+- **cuDNN**: 8.x 이상
 
 #### Python
-- **권장**: Python 3.8 - 3.11
+- **권장**: Python 3.9 - 3.11
 - **필수 라이브러리**:
-  - PyTorch 2.0+
+  - PyTorch 2.0+ (CUDA 빌드)
   - diffusers >= 0.30.0
   - transformers >= 4.37.0
-  - Pillow, tqdm, accelerate
+  - accelerate >= 0.20.0
+  - Pillow, tqdm
 
 ### Hugging Face 토큰
 
 **Qwen-Image-Edit-2511은 공개 모델이므로 Hugging Face 토큰이 필요하지 않습니다.**
 
-단, 다운로드 속도 제한을 피하려면 토큰 사용을 권장합니다:
+서버 환경에서 다운로드 속도 제한을 피하려면 토큰 사용 권장:
 
 ```bash
-# 선택사항: Hugging Face 로그인
+# 서버에서 Hugging Face 로그인
 pip install huggingface-hub
 huggingface-cli login
 ```
 
-## 설치
+## 설치 (Linux Server)
 
-### 0. CUDA 설치 (GPU 사용 시)
+### 0. 전제 조건 확인
 
-GPU를 사용하려면 먼저 NVIDIA CUDA Toolkit을 설치하세요:
+```bash
+# CUDA 설치 확인
+nvidia-smi
+nvcc --version
 
-- **Windows**: [CUDA Toolkit Download](https://developer.nvidia.com/cuda-downloads)
-- **Linux**:
-  ```bash
-  # Ubuntu/Debian 예시
-  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-  sudo dpkg -i cuda-keyring_1.1-1_all.deb
-  sudo apt-get update
-  sudo apt-get -y install cuda-toolkit-12-1
-  ```
+# Python 버전 확인 (3.9-3.11 권장)
+python --version
 
-**권장 버전**: CUDA 11.8 또는 12.1
+# GPU 정보 확인
+nvidia-smi --query-gpu=name,memory.total --format=csv
+```
 
 ### 1. 저장소 클론
 
@@ -78,36 +88,60 @@ git clone <repository-url>
 cd qwen-image
 ```
 
-### 2. 가상환경 생성 (권장)
+### 2. Python 가상환경 생성 (권장)
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 또는
-venv\Scripts\activate  # Windows
+# venv 사용
+python3 -m venv venv
+source venv/bin/activate
+
+# 또는 conda 사용
+conda create -n qwen-img python=3.10
+conda activate qwen-img
 ```
 
-### 3. PyTorch 설치 (CUDA 버전에 맞게)
+### 3. PyTorch 설치 (CUDA 빌드)
 
 ```bash
-# CUDA 12.1 사용 시
+# CUDA 12.1 사용 시 (권장)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 # CUDA 11.8 사용 시
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
-# CPU만 사용 시
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# 설치 확인
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
 ```
 
-### 4. 의존성 설치
+### 4. Diffusers 최신 버전 설치
 
 ```bash
-# 기본 의존성 설치
+# Qwen 모델 지원을 위해 최신 버전 필수
+pip install git+https://github.com/huggingface/diffusers
+```
+
+### 5. 나머지 의존성 설치
+
+```bash
 pip install -r requirements.txt
 
-# diffusers 최신 버전 설치 (권장)
-pip install git+https://github.com/huggingface/diffusers
+# 선택: xformers (메모리 최적화)
+pip install xformers
+```
+
+### 6. 설치 검증
+
+```bash
+python -c "
+import torch
+import diffusers
+print(f'✓ PyTorch {torch.__version__}')
+print(f'✓ Diffusers {diffusers.__version__}')
+print(f'✓ CUDA available: {torch.cuda.is_available()}')
+print(f'✓ GPUs: {torch.cuda.device_count()}')
+for i in range(torch.cuda.device_count()):
+    print(f'  GPU {i}: {torch.cuda.get_device_name(i)}')
+"
 ```
 
 ## 사용 방법
@@ -147,36 +181,65 @@ python image_editor.py \
   --output_folder ./edited_images
 ```
 
-### Lightning 모델 사용 (빠르고 메모리 효율적)
+### A6000 서버 최적화 사용법
 
-Lightning 모델은 **4-step 추론**으로 **10배 빠르고** 메모리 사용량이 적습니다.
-
-#### 1. Lightning 모델 다운로드
+#### 단일 GPU 사용 (기본)
 
 ```bash
-python download_model.py \
-  --model_id lightx2v/Qwen-Image-Edit-2511-Lightning \
-  --save_path ./models/qwen-lightning
-```
-
-#### 2. Lightning 모델로 편집 (자동 최적화)
-
-```bash
-# Lightning 모델은 자동으로 4-step으로 최적화됩니다
 python image_editor.py \
-  --model_path ./models/qwen-lightning \
+  --model_path ./models/qwen-image-edit \
   --image input.jpg \
   --prompt "make it brighter" \
   --output output.jpg \
   --gpu_id 0 \
-  --dtype float16 \
-  --sequential-cpu-offload
+  --dtype bfloat16
 ```
 
-**메모리 절약 옵션**:
-- `--sequential-cpu-offload`: 최대 메모리 절약 (24GB GPU에 권장)
-- `--cpu-offload`: 일반 메모리 절약
-- `--dtype float16`: FP16 정밀도 (메모리 절약)
+#### 멀티 GPU - Model Parallelism (VRAM 공유)
+
+```bash
+# 모델이 48GB보다 큰 경우 여러 GPU에 모델 분산
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --image input.jpg \
+  --prompt "enhance quality and details" \
+  --output output.jpg \
+  --multi-gpu-model \
+  --dtype bfloat16
+```
+
+#### 멀티 GPU - Data Parallelism (배치 병렬 처리)
+
+```bash
+# 대량 이미지를 8개 GPU로 병렬 처리
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --input_folder ./images \
+  --prompt "enhance quality and details" \
+  --output_folder ./edited_images \
+  --multi-gpu-data \
+  --dtype bfloat16
+```
+
+#### 대용량 배치 처리 (서버 최적화)
+
+```bash
+# 1000장 이미지를 배치 처리
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --input_folder ./dataset \
+  --prompt "professional photo enhancement" \
+  --output_folder ./output \
+  --gpu_id 0 \
+  --dtype bfloat16 \
+  --num_inference_steps 40
+```
+
+**A6000 최적화 옵션**:
+- `--dtype bfloat16`: A6000에 최적화된 데이터 타입 (기본값)
+- `--multi-gpu-model`: Model Parallelism (모델이 48GB 초과 시 VRAM 공유)
+- `--multi-gpu-data`: Data Parallelism (대량 배치 처리, 8배 속도 향상)
+- `--gpu_id 0-7`: 특정 GPU 선택 (0부터 7까지)
 
 ## 사용 예시
 
@@ -263,14 +326,16 @@ python image_editor.py \
 
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
-| `--device` | auto | 디바이스 (cuda, cpu, mps) |
-| `--gpu_id` | None | 사용할 GPU 번호 (멀티 GPU 환경) |
-| `--dtype` | auto | 데이터 타입 (bfloat16, float16, float32) |
-| `--cpu-offload` | False | CPU 오프로딩 (메모리 절약) |
-| `--sequential-cpu-offload` | False | Sequential CPU 오프로딩 (최대 메모리 절약) |
-| `--lora-path` | None | LoRA 가중치 경로 |
+| `--device` | auto | 디바이스 (cuda, cpu) |
+| `--gpu_id` | None | 사용할 GPU 번호 (0-7, A6000 8장 환경) |
+| `--dtype` | bfloat16 | 데이터 타입 (bfloat16, float16, float32) |
+| `--multi-gpu-model` | False | Model Parallelism: 모델을 여러 GPU에 분산 (VRAM 공유) |
+| `--multi-gpu-data` | False | Data Parallelism: 배치를 여러 GPU에 분산 (병렬 추론) |
+| `--cpu-offload` | False | CPU 오프로딩 (A6000 48GB에서는 불필요) |
+| `--sequential-cpu-offload` | False | Sequential CPU 오프로딩 (A6000에서는 불필요) |
+| `--lora-path` | None | LoRA 가중치 경로 (선택) |
 | `--negative_prompt` | " " | 네거티브 프롬프트 |
-| `--num_inference_steps` | 40 | 추론 스텝 수 (Lightning: 자동 4) |
+| `--num_inference_steps` | 40 | 추론 스텝 수 (품질 vs 속도 조절) |
 | `--guidance_scale` | 1.0 | 가이던스 스케일 |
 | `--true_cfg_scale` | 4.0 | True CFG 스케일 |
 | `--seed` | None | 랜덤 시드 (재현성) |
@@ -392,24 +457,77 @@ RuntimeError: CUDA out of memory
 - **사용 목적**: 동일한 결과 재현
 - **예시**: `--seed 42`
 
-## GPU VRAM별 최적화 팁
+## A6000 서버 최적화 팁
 
-### 12-16GB VRAM (RTX 3060, RTX 4060 Ti 등)
-- 모델을 bfloat16으로 로드 (기본값)
-- 필요시 `--num_inference_steps 30`으로 감소
-- 한 번에 하나의 이미지만 처리
+### 단일 GPU 사용 (A6000 1장, 48GB VRAM)
+```bash
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --input_folder ./images \
+  --prompt "your prompt" \
+  --output_folder ./output \
+  --gpu_id 0 \
+  --dtype bfloat16 \
+  --num_inference_steps 40
+```
+- **메모리 사용량**: ~25-30GB VRAM
+- **처리 속도**: 이미지당 약 10-15초
+- **권장 배치 크기**: 100-500장
 
-### 24GB VRAM (RTX 3090, RTX 4090 등)
-- 기본 설정 사용
-- 배치 처리 가능
-- `--num_inference_steps 50`까지 가능
+### 멀티 GPU - Data Parallelism (A6000 2-8장)
+```bash
+# 대량 배치를 여러 GPU로 병렬 처리
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --input_folder ./large_dataset \
+  --prompt "professional enhancement" \
+  --output_folder ./output \
+  --multi-gpu-data \
+  --dtype bfloat16
+```
+- **메모리 사용량**: GPU당 ~35-40GB VRAM
+- **처리 속도**: GPU 수에 비례하여 증가 (8 GPU = 8배 빠름)
+- **권장 배치 크기**: 1000-10000장
+- **최적 환경**: A6000 8장 서버
 
-### 8GB 이하 VRAM
-- CPU 모드 사용 권장:
-  ```bash
-  python image_editor.py --device cpu ...
-  ```
-- 또는 양자화된 모델 사용 고려 (GGUF, FP8)
+### 멀티 GPU - Model Parallelism (모델이 큰 경우)
+```bash
+# 모델을 여러 GPU에 자동 분산 (VRAM 부족 시)
+python image_editor.py \
+  --model_path ./models/qwen-image-edit \
+  --image input.jpg \
+  --prompt "enhance quality" \
+  --output output.jpg \
+  --multi-gpu-model \
+  --dtype bfloat16
+```
+- **메모리 사용량**: GPU당 균등 분산 (예: 60GB 모델 → 각 GPU 30GB)
+- **처리 속도**: 단일 GPU와 유사하지만 큰 모델 로드 가능
+- **권장 사용**: 모델 크기가 48GB 초과 시
+
+### 최대 성능 설정
+```bash
+# 고품질 출력 (느림)
+--num_inference_steps 50 \
+--dtype bfloat16
+
+# 균형 (권장)
+--num_inference_steps 40 \
+--dtype bfloat16
+
+# 빠른 처리 (품질 타협)
+--num_inference_steps 30 \
+--dtype float16
+```
+
+### 서버 리소스 모니터링
+```bash
+# GPU 사용률 모니터링
+watch -n 1 nvidia-smi
+
+# 상세 메모리 사용량
+nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu --format=csv -l 1
+```
 
 ## 참고 링크
 

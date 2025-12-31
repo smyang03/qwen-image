@@ -1,41 +1,18 @@
 #!/usr/bin/env python3
 """
-Qwen Image Edit Offline Editor
-이미지 편집을 위한 오프라인 스크립트
+Qwen Image Edit Offline Editor - Linux Server Edition
+A6000 GPU (48GB VRAM x 8) 최적화 버전
 """
 
 import os
-import sys
-
-# Windows 호환성: triton CUDA_PATH 에러 방지
-if sys.platform == "win32" and "CUDA_PATH" not in os.environ:
-    # CUDA_PATH가 설정되지 않은 경우 기본값 설정
-    # 일반적인 CUDA 설치 경로들을 확인
-    possible_cuda_paths = [
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1",
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0",
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8",
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7",
-        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6",
-    ]
-
-    cuda_path_found = False
-    for path in possible_cuda_paths:
-        if os.path.exists(path):
-            os.environ["CUDA_PATH"] = path
-            cuda_path_found = True
-            break
-
-    # CUDA 경로를 찾지 못한 경우 더미 경로 설정 (CPU 모드용)
-    if not cuda_path_found:
-        os.environ["CUDA_PATH"] = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
-
 import argparse
 from pathlib import Path
 from PIL import Image
 import torch
 from diffusers import QwenImageEditPlusPipeline
 from tqdm import tqdm
+import multiprocessing as mp
+from typing import List, Tuple
 
 
 class QwenImageEditor:
@@ -49,22 +26,28 @@ class QwenImageEditor:
         gpu_id: int = None,
         enable_cpu_offload: bool = False,
         sequential_cpu_offload: bool = False,
-        lora_path: str = None
+        lora_path: str = None,
+        multi_gpu_model: bool = False,
+        multi_gpu_data: bool = False
     ):
         """
         Args:
             model_path: 로컬 모델 경로 또는 Hugging Face 모델 ID
             device: 사용할 디바이스 (cuda, cpu 등). None이면 자동 선택
-            torch_dtype: torch 데이터 타입 (기본값: bfloat16 for cuda, float32 for cpu)
-            gpu_id: 사용할 GPU 인덱스 (멀티 GPU 환경에서 유용)
-            enable_cpu_offload: CPU 오프로딩 사용 여부 (메모리 절약)
-            sequential_cpu_offload: Sequential CPU 오프로딩 (더 공격적인 메모리 절약)
-            lora_path: LoRA 가중치 경로 (Lightning LoRA 등)
+            torch_dtype: torch 데이터 타입 (기본값: bfloat16 for A6000)
+            gpu_id: 사용할 GPU 인덱스 (0-7, None이면 자동 선택)
+            enable_cpu_offload: CPU 오프로딩 (A6000 48GB에서는 불필요)
+            sequential_cpu_offload: Sequential CPU 오프로딩 (A6000에서는 불필요)
+            lora_path: LoRA 가중치 경로
+            multi_gpu_model: Model Parallelism (모델을 여러 GPU에 분산, VRAM 공유)
+            multi_gpu_data: Data Parallelism (배치를 여러 GPU에 분산, 병렬 추론)
         """
         self.model_path = model_path
         self.enable_cpu_offload = enable_cpu_offload
         self.sequential_cpu_offload = sequential_cpu_offload
         self.lora_path = lora_path
+        self.multi_gpu_model = multi_gpu_model
+        self.multi_gpu_data = multi_gpu_data
         self.is_lightning = "lightning" in model_path.lower()
 
         # GPU ID가 지정된 경우 해당 GPU 사용
@@ -80,23 +63,38 @@ class QwenImageEditor:
 
         # 멀티 GPU 정보 출력
         if torch.cuda.is_available():
-            print(f"사용 가능한 GPU 수: {torch.cuda.device_count()}")
-            for i in range(torch.cuda.device_count()):
-                print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+            gpu_count = torch.cuda.device_count()
+            print(f"\n{'='*60}")
+            print(f"GPU 환경 정보")
+            print(f"{'='*60}")
+            print(f"사용 가능한 GPU 수: {gpu_count}")
+            for i in range(gpu_count):
+                gpu_name = torch.cuda.get_device_name(i)
+                gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                print(f"  GPU {i}: {gpu_name} ({gpu_memory:.1f} GB)")
+            if multi_gpu_model and gpu_count > 1:
+                print(f"멀티 GPU 모델 모드: 모델을 {gpu_count}개 GPU에 분산 (VRAM 공유)")
+            elif multi_gpu_data and gpu_count > 1:
+                print(f"멀티 GPU 데이터 모드: {gpu_count}개 GPU 병렬 배치 처리")
+            print(f"{'='*60}\n")
 
-        # dtype 설정
+        # dtype 설정 (A6000 최적화: bfloat16 기본)
         if torch_dtype is None:
             if self.device == "cuda":
-                torch_dtype = torch.bfloat16
+                torch_dtype = torch.bfloat16  # A6000에 최적화
             else:
                 torch_dtype = torch.float32
 
         self.torch_dtype = torch_dtype
 
-        print(f"\n디바이스: {self.device}")
+        print(f"디바이스: {self.device}")
         print(f"데이터 타입: {torch_dtype}")
+        if multi_gpu_model:
+            print(f"Model Parallelism: 활성화 (VRAM 부족 시 자동 분산)")
+        elif multi_gpu_data:
+            print(f"Data Parallelism: 활성화 (배치 병렬 처리)")
         if sequential_cpu_offload:
-            print(f"Sequential CPU 오프로딩: 활성화 (최대 메모리 절약 모드)")
+            print(f"Sequential CPU 오프로딩: 활성화 (메모리 절약 모드)")
         elif enable_cpu_offload:
             print(f"CPU 오프로딩: 활성화 (메모리 절약 모드)")
         if self.is_lightning:
@@ -122,6 +120,11 @@ class QwenImageEditor:
                     "use_safetensors": True,     # safetensors 우선 사용
                 }
 
+                # Model Parallelism: 모델을 여러 GPU에 자동 분산
+                if multi_gpu_model:
+                    load_kwargs["device_map"] = "auto"
+                    print("Model Parallelism 활성화: device_map='auto'")
+
                 print("2/4: 모델 파일 로딩 중 (시간이 걸릴 수 있습니다)...")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
@@ -129,15 +132,25 @@ class QwenImageEditor:
                 )
             else:
                 print("Hugging Face에서 모델 다운로드 중...")
+                load_kwargs = {
+                    "torch_dtype": torch_dtype,
+                    "low_cpu_mem_usage": True
+                }
+                if multi_gpu_model:
+                    load_kwargs["device_map"] = "auto"
+                    print("Model Parallelism 활성화: device_map='auto'")
+
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
-                    torch_dtype=torch_dtype,
-                    low_cpu_mem_usage=True
+                    **load_kwargs
                 )
 
             print("3/4: 모델을 GPU/CPU로 이동 중...")
             # CPU 오프로딩 또는 일반 디바이스 이동
-            if sequential_cpu_offload and self.device == "cuda":
+            if multi_gpu_model:
+                print("Model Parallelism: 모델이 이미 여러 GPU에 분산되어 있습니다")
+                # device_map="auto" 사용 시 자동으로 분산되므로 .to() 호출 불필요
+            elif sequential_cpu_offload and self.device == "cuda":
                 print("Sequential CPU 오프로딩 설정 중 (최대 메모리 절약)...")
                 self.pipeline.enable_sequential_cpu_offload()
                 print("Sequential CPU 오프로딩 활성화 완료")
@@ -293,7 +306,15 @@ class QwenImageEditor:
         print(f"\n총 {len(image_files)}개의 이미지 처리 시작...")
         print(f"프롬프트: {prompt}\n")
 
-        # 일괄 처리
+        # Data Parallelism: 여러 GPU에 이미지 분산 처리
+        if self.multi_gpu_data and torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            if gpu_count > 1:
+                print(f"Data Parallelism: {gpu_count}개 GPU로 병렬 처리 시작")
+                self._batch_edit_parallel(image_files, prompt, output_path, gpu_count, **kwargs)
+                return
+
+        # 단일 GPU 또는 일반 처리
         for idx, img_file in enumerate(tqdm(image_files, desc="이미지 편집 중")):
             output_file = output_path / img_file.name
             try:
@@ -306,6 +327,192 @@ class QwenImageEditor:
             except Exception as e:
                 print(f"\n스킵: {img_file.name} - {e}")
                 continue
+
+    def _batch_edit_parallel(
+        self,
+        image_files: List[Path],
+        prompt: str,
+        output_path: Path,
+        gpu_count: int,
+        **kwargs
+    ):
+        """
+        Data Parallelism을 사용한 병렬 배치 처리
+
+        Args:
+            image_files: 처리할 이미지 파일 리스트
+            prompt: 편집 프롬프트
+            output_path: 출력 폴더
+            gpu_count: 사용할 GPU 개수
+            **kwargs: edit_image에 전달할 추가 파라미터
+        """
+        # 이미지를 GPU 수만큼 분할
+        chunk_size = (len(image_files) + gpu_count - 1) // gpu_count
+        image_chunks = [
+            image_files[i:i + chunk_size]
+            for i in range(0, len(image_files), chunk_size)
+        ]
+
+        print(f"총 {len(image_files)}개 이미지를 {len(image_chunks)}개 GPU에 분산:")
+        for i, chunk in enumerate(image_chunks):
+            print(f"  GPU {i}: {len(chunk)}개 이미지")
+
+        # 멀티프로세싱 시작
+        ctx = mp.get_context('spawn')  # CUDA와 호환되는 spawn 방식 사용
+        processes = []
+
+        for gpu_id, chunk in enumerate(image_chunks):
+            if not chunk:  # 빈 청크는 건너뛰기
+                continue
+
+            p = ctx.Process(
+                target=_process_images_on_gpu,
+                args=(
+                    gpu_id,
+                    chunk,
+                    prompt,
+                    output_path,
+                    self.model_path,
+                    self.torch_dtype,
+                    self.enable_cpu_offload,
+                    self.sequential_cpu_offload,
+                    self.lora_path,
+                    self.is_lightning,
+                    kwargs
+                )
+            )
+            p.start()
+            processes.append(p)
+
+        # 모든 프로세스 완료 대기
+        for p in processes:
+            p.join()
+
+        print(f"\n병렬 처리 완료: {len(image_files)}개 이미지 처리됨")
+
+
+def _process_images_on_gpu(
+    gpu_id: int,
+    image_files: List[Path],
+    prompt: str,
+    output_path: Path,
+    model_path: str,
+    torch_dtype,
+    enable_cpu_offload: bool,
+    sequential_cpu_offload: bool,
+    lora_path: str,
+    is_lightning: bool,
+    kwargs: dict
+):
+    """
+    특정 GPU에서 이미지 배치를 처리하는 워커 함수
+
+    Args:
+        gpu_id: GPU 번호
+        image_files: 처리할 이미지 파일 리스트
+        prompt: 편집 프롬프트
+        output_path: 출력 폴더
+        model_path: 모델 경로
+        torch_dtype: PyTorch dtype
+        enable_cpu_offload: CPU 오프로드 활성화 여부
+        sequential_cpu_offload: Sequential CPU 오프로드 활성화 여부
+        lora_path: LoRA 경로
+        is_lightning: Lightning 모델 여부
+        kwargs: edit_image에 전달할 추가 파라미터
+    """
+    try:
+        # GPU 설정
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        device = f"cuda:0"  # 프로세스 내에서는 항상 0번 GPU
+
+        print(f"[GPU {gpu_id}] 모델 로딩 시작...")
+
+        # 각 GPU에서 독립적으로 모델 로드
+        load_kwargs = {
+            "torch_dtype": torch_dtype,
+            "local_files_only": True if os.path.exists(model_path) else False,
+            "low_cpu_mem_usage": True,
+            "use_safetensors": True,
+        }
+
+        pipeline = QwenImageEditPlusPipeline.from_pretrained(
+            model_path,
+            **load_kwargs
+        )
+
+        # CPU 오프로딩 또는 GPU로 이동
+        if sequential_cpu_offload:
+            pipeline.enable_sequential_cpu_offload()
+        elif enable_cpu_offload:
+            pipeline.enable_model_cpu_offload()
+        else:
+            pipeline.to(device)
+
+        # 메모리 최적화
+        pipeline.enable_attention_slicing(1)
+        try:
+            pipeline.enable_vae_slicing()
+        except:
+            pass
+
+        # LoRA 로딩
+        if lora_path:
+            try:
+                pipeline.load_lora_weights(lora_path)
+            except Exception as e:
+                print(f"[GPU {gpu_id}] LoRA 로딩 실패: {e}")
+
+        print(f"[GPU {gpu_id}] 모델 로딩 완료, {len(image_files)}개 이미지 처리 시작")
+
+        # 이미지 처리
+        for img_file in tqdm(image_files, desc=f"GPU {gpu_id}", position=gpu_id):
+            output_file = output_path / img_file.name
+            try:
+                # 이미지 로드
+                image = Image.open(str(img_file)).convert("RGB")
+
+                # Lightning 모델 최적화
+                num_steps = kwargs.get("num_inference_steps", 40)
+                if is_lightning and num_steps == 40:
+                    kwargs["num_inference_steps"] = 4
+
+                # 생성기 설정
+                generator = None
+                seed = kwargs.get("seed")
+                if seed is not None:
+                    generator = torch.manual_seed(seed)
+
+                # 파이프라인 입력 준비
+                inputs = {
+                    "image": [image],
+                    "prompt": prompt,
+                    "negative_prompt": kwargs.get("negative_prompt", " "),
+                    "num_inference_steps": kwargs.get("num_inference_steps", 40),
+                    "guidance_scale": kwargs.get("guidance_scale", 1.0),
+                    "true_cfg_scale": kwargs.get("true_cfg_scale", 4.0),
+                    "num_images_per_prompt": kwargs.get("num_images_per_prompt", 1),
+                }
+                if generator is not None:
+                    inputs["generator"] = generator
+
+                # 이미지 생성
+                with torch.inference_mode():
+                    output = pipeline(**inputs)
+                    output_image = output.images[0]
+
+                # 저장
+                output_image.save(str(output_file))
+
+            except Exception as e:
+                print(f"\n[GPU {gpu_id}] 스킵: {img_file.name} - {e}")
+                continue
+
+        print(f"[GPU {gpu_id}] 처리 완료")
+
+    except Exception as e:
+        print(f"[GPU {gpu_id}] 에러: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def main():
@@ -408,6 +615,16 @@ def main():
         help="Sequential CPU 오프로딩 사용 (더 공격적인 메모리 절약, cpu-offload보다 느리지만 메모리 사용량 최소화)"
     )
     parser.add_argument(
+        "--multi-gpu-model",
+        action="store_true",
+        help="Model Parallelism: 모델을 여러 GPU에 분산 (VRAM 공유, 단일 추론)"
+    )
+    parser.add_argument(
+        "--multi-gpu-data",
+        action="store_true",
+        help="Data Parallelism: 배치를 여러 GPU에 분산 (병렬 추론, ~30GB 모델용)"
+    )
+    parser.add_argument(
         "--lora-path",
         type=str,
         default=None,
@@ -486,7 +703,9 @@ def main():
         gpu_id=args.gpu_id,
         enable_cpu_offload=args.cpu_offload,
         sequential_cpu_offload=args.sequential_cpu_offload,
-        lora_path=args.lora_path
+        lora_path=args.lora_path,
+        multi_gpu_model=args.multi_gpu_model,
+        multi_gpu_data=args.multi_gpu_data
     )
 
     # 이미지 편집
