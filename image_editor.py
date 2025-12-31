@@ -5,14 +5,38 @@ A6000 GPU (48GB VRAM x 8) 최적화 버전
 """
 
 import os
+import sys
+
+# torchvision 호환성 문제 해결
+# torch를 먼저 import하여 operator 등록 순서 문제 방지
+try:
+    import torch
+    # torchvision import 전에 torch ops 초기화
+    if hasattr(torch, '_C') and hasattr(torch._C, '_dispatch_has_kernel_for_dispatch_key'):
+        pass  # torch 내부 초기화 확인
+except Exception as e:
+    print(f"경고: torch 초기화 중 문제 발생: {e}", file=sys.stderr)
+
 import argparse
 from pathlib import Path
 from PIL import Image
-import torch
-from diffusers import QwenImageEditPlusPipeline
 from tqdm import tqdm
 import multiprocessing as mp
 from typing import List, Tuple
+
+# diffusers import (torchvision 의존성 포함)
+try:
+    from diffusers import QwenImageEditPlusPipeline
+except RuntimeError as e:
+    if "torchvision::nms does not exist" in str(e):
+        print("torchvision 호환성 문제 감지. 해결 시도 중...", file=sys.stderr)
+        # torchvision 재로드 시도
+        import importlib
+        if 'torchvision' in sys.modules:
+            del sys.modules['torchvision']
+        from diffusers import QwenImageEditPlusPipeline
+    else:
+        raise
 
 
 class QwenImageEditor:
