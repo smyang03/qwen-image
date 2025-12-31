@@ -146,8 +146,8 @@ class QwenImageEditor:
 
                 # Model Parallelism: 모델을 여러 GPU에 자동 분산
                 if multi_gpu_model:
-                    load_kwargs["device_map"] = "auto"
-                    print("Model Parallelism 활성화: device_map='auto'")
+                    load_kwargs["device_map"] = "balanced"
+                    print("Model Parallelism 활성화: device_map='balanced' (VRAM 균등 분산)")
 
                 print("2/4: 모델 파일 로딩 중 (시간이 걸릴 수 있습니다)...")
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
@@ -161,8 +161,8 @@ class QwenImageEditor:
                     "low_cpu_mem_usage": True
                 }
                 if multi_gpu_model:
-                    load_kwargs["device_map"] = "auto"
-                    print("Model Parallelism 활성화: device_map='auto'")
+                    load_kwargs["device_map"] = "balanced"
+                    print("Model Parallelism 활성화: device_map='balanced' (VRAM 균등 분산)")
 
                 self.pipeline = QwenImageEditPlusPipeline.from_pretrained(
                     model_path,
