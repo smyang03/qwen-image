@@ -102,15 +102,17 @@ conda activate qwen-img
 
 ### 3. PyTorch 설치 (CUDA 빌드)
 
+**⚠️ 중요**: torch와 torchvision을 함께 설치해야 합니다!
+
 ```bash
 # CUDA 12.1 사용 시 (권장)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 
 # CUDA 11.8 사용 시
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu118
 
 # 설치 확인
-python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
+python -c "import torch; import torchvision; print(f'PyTorch: {torch.__version__}'); print(f'torchvision: {torchvision.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
 ```
 
 ### 4. Diffusers 최신 버전 설치
@@ -355,7 +357,31 @@ qwen-image/
 
 ## 문제 해결
 
-### Windows에서 CUDA_PATH 에러
+### RuntimeError: operator torchvision::nms does not exist
+
+**증상**:
+```
+RuntimeError: operator torchvision::nms does not exist
+ModuleNotFoundError: Could not import module 'Qwen2_5_VLForConditionalGeneration'
+```
+
+**원인**: `torch`와 `torchvision` 버전 불일치
+
+**해결책**:
+```bash
+# 1. 기존 torch 제거 후 호환 버전 재설치
+pip uninstall torch torchvision -y
+
+# 2. 호환되는 버전 함께 설치 (CUDA 12.1)
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+
+# 3. 확인
+python -c "import torch; import torchvision; from diffusers import QwenImageEditPlusPipeline; print('✓ 설치 성공')"
+```
+
+**상세 가이드**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 참고
+
+### Windows에서 CUDA_PATH 에러 (더 이상 지원 안 됨)
 
 ```
 TypeError: expected str, bytes or os.PathLike object, not NoneType
