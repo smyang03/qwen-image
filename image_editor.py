@@ -229,71 +229,133 @@ class QwenImageEditor:
     def edit_image(
         self,
         image_path,
-        prompt: str,
+        prompt,  # str 또는 List[str]
         output_path: str,
         negative_prompt: str = " ",
         num_inference_steps: int = 40,
         guidance_scale: float = 1.0,
         true_cfg_scale: float = 4.0,
         seed: int = None,
-        num_images_per_prompt: int = 1
+        num_images_per_prompt: int = 1,
+        maintain_aspect_ratio: bool = True,
+        target_height: int = None,
+        target_width: int = None
     ):
         """
-        이미지 편집
+        이미지 편집 (다중 프롬프트 지원)
 
         Args:
-            image_path: 입력 이미지 경로 (단일 경로 또는 경로 리스트)
-            prompt: 편집 프롬프트
-            output_path: 출력 이미지 경로
+            image_path: 입력 이미지 경로
+            prompt: 편집 프롬프트 (단일 문자열 또는 리스트)
+            output_path: 출력 이미지 경로 (프롬프트가 여러 개면 _0, _1... 붙음)
             negative_prompt: 네거티브 프롬프트 (기본값: " ")
             num_inference_steps: 추론 스텝 수 (기본값: 40)
             guidance_scale: 가이던스 스케일 (기본값: 1.0)
             true_cfg_scale: True CFG 스케일 (기본값: 4.0)
             seed: 랜덤 시드 (재현성을 위해 사용)
             num_images_per_prompt: 프롬프트당 생성할 이미지 수
+            maintain_aspect_ratio: 입력 이미지 비율 유지 여부 (기본값: True)
+            target_height: 출력 이미지 높이 (None이면 입력과 동일)
+            target_width: 출력 이미지 너비 (None이면 입력과 동일)
         """
         try:
+            # 프롬프트를 리스트로 변환
+            if isinstance(prompt, str):
+                prompts = [prompt]
+            else:
+                prompts = list(prompt)
+
             # Lightning 모델 자동 최적화
             if self.is_lightning and num_inference_steps == 40:
                 num_inference_steps = 4
                 print(f"Lightning 모델 감지: 추론 스텝을 {num_inference_steps}로 자동 조정")
 
-            # 이미지 로드
+            # 이미지 로드 및 크기 확인
             if isinstance(image_path, (list, tuple)):
                 images = [Image.open(path).convert("RGB") for path in image_path]
+                input_image = images[0]
             else:
-                images = [Image.open(image_path).convert("RGB")]
+                input_image = Image.open(image_path).convert("RGB")
+                images = [input_image]
 
-            # 생성기 설정 (시드 고정)
-            generator = None
-            if seed is not None:
-                generator = torch.manual_seed(seed)
+            # 입력 이미지 크기
+            original_width, original_height = input_image.size
+            print(f"입력 이미지 크기: {original_width}x{original_height}")
 
-            # 파이프라인 입력 준비
-            inputs = {
-                "image": images,
-                "prompt": prompt,
-                "negative_prompt": negative_prompt,
-                "num_inference_steps": num_inference_steps,
-                "guidance_scale": guidance_scale,
-                "true_cfg_scale": true_cfg_scale,
-                "num_images_per_prompt": num_images_per_prompt,
-            }
-            if generator is not None:
-                inputs["generator"] = generator
+            # 출력 크기 결정
+            if maintain_aspect_ratio and (target_height is None or target_width is None):
+                output_height = target_height if target_height is not None else original_height
+                output_width = target_width if target_width is not None else original_width
+                print(f"출력 이미지 크기: {output_width}x{output_height} (입력과 동일)")
+            elif target_height and target_width:
+                output_height = target_height
+                output_width = target_width
+                print(f"출력 이미지 크기: {output_width}x{output_height} (사용자 지정)")
+            else:
+                output_height = original_height
+                output_width = original_width
 
-            # 이미지 생성
-            print(f"이미지 생성 중... (steps: {num_inference_steps})")
-            with torch.inference_mode():
-                output = self.pipeline(**inputs)
-                output_image = output.images[0]
+            # 각 프롬프트마다 이미지 생성
+            for idx, single_prompt in enumerate(prompts):
+                print(f"\n{'='*60}")
+                print(f"프롬프트 {idx + 1}/{len(prompts)}: {single_prompt}")
+                print(f"{'='*60}")
 
-            # 결과 저장
-            output_image.save(output_path)
-            print(f"저장 완료: {os.path.abspath(output_path)}")
+                # 생성기 설정 (시드 고정)
+                generator = None
+                if seed is not None:
+                    # 프롬프트마다 다른 시드 사용 (재현성 유지하면서 다양성 확보)
+                    generator = torch.manual_seed(seed + idx)
+
+                # 파이프라인 입력 준비
+                inputs = {
+                    "image": images,
+                    "prompt": single_prompt,
+                    "negative_prompt": negative_prompt,
+                    "num_inference_steps": num_inference_steps,
+                    "guidance_scale": guidance_scale,
+                    "true_cfg_scale": true_cfg_scale,
+                    "num_images_per_prompt": num_images_per_prompt,
+                    "height": output_height,
+                    "width": output_width,
+                }
+                if generator is not None:
+                    inputs["generator"] = generator
+
+                # 이미지 생성
+                print(f"이미지 생성 중... (steps: {num_inference_steps})")
+                with torch.inference_mode():
+                    output = self.pipeline(**inputs)
+
+                # 결과 저장 (여러 프롬프트일 경우 파일명에 인덱스 추가)
+                if len(prompts) > 1:
+                    # 파일명에 _0, _1 등 추가
+                    path_obj = Path(output_path)
+                    stem = path_obj.stem
+                    suffix = path_obj.suffix
+                    parent = path_obj.parent
+                    final_output_path = parent / f"{stem}_{idx}{suffix}"
+                else:
+                    final_output_path = output_path
+
+                # num_images_per_prompt > 1인 경우 각 이미지 저장
+                for img_idx, output_image in enumerate(output.images):
+                    if num_images_per_prompt > 1:
+                        path_obj = Path(final_output_path)
+                        stem = path_obj.stem
+                        suffix = path_obj.suffix
+                        parent = path_obj.parent
+                        final_path = parent / f"{stem}_img{img_idx}{suffix}"
+                    else:
+                        final_path = final_output_path
+
+                    output_image.save(str(final_path))
+                    print(f"저장 완료: {os.path.abspath(final_path)}")
 
         except Exception as e:
             print(f"에러: 이미지 편집 실패 - {e}")
+            import traceback
+            traceback.print_exc()
             raise
 
     def batch_edit(
@@ -578,8 +640,9 @@ def main():
     parser.add_argument(
         "--prompt",
         type=str,
+        nargs='+',
         required=True,
-        help="이미지 편집 프롬프트"
+        help="이미지 편집 프롬프트 (여러 개 가능, 각각 다른 이미지 생성)"
     )
 
     # 단일 이미지 또는 폴더
@@ -688,7 +751,24 @@ def main():
         "--num_images",
         type=int,
         default=1,
-        help="생성할 이미지 수 (기본값: 1)"
+        help="프롬프트당 생성할 이미지 수 (기본값: 1)"
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="출력 이미지 높이 (기본값: 입력 이미지와 동일)"
+    )
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help="출력 이미지 너비 (기본값: 입력 이미지와 동일)"
+    )
+    parser.add_argument(
+        "--no-maintain-aspect-ratio",
+        action="store_true",
+        help="입력 이미지 비율 유지 안 함 (기본값: 비율 유지)"
     )
 
     args = parser.parse_args()
@@ -709,6 +789,17 @@ def main():
         elif args.dtype == "float32":
             torch_dtype = torch.float32
 
+    # 프롬프트 처리 (리스트로 변환)
+    if len(args.prompt) == 1:
+        # 단일 프롬프트
+        final_prompt = args.prompt[0]
+    else:
+        # 여러 프롬프트
+        final_prompt = args.prompt
+        print(f"\n여러 프롬프트 감지: {len(args.prompt)}개의 이미지가 생성됩니다")
+        for idx, p in enumerate(args.prompt):
+            print(f"  프롬프트 {idx + 1}: {p}")
+
     # 생성 파라미터
     generation_kwargs = {
         "negative_prompt": args.negative_prompt,
@@ -717,6 +808,9 @@ def main():
         "true_cfg_scale": args.true_cfg_scale,
         "seed": args.seed,
         "num_images_per_prompt": args.num_images,
+        "maintain_aspect_ratio": not args.no_maintain_aspect_ratio,
+        "target_height": args.height,
+        "target_width": args.width,
     }
 
     # 에디터 초기화
@@ -735,11 +829,15 @@ def main():
     # 이미지 편집
     if args.image:
         print(f"\n단일 이미지 편집 시작...")
-        editor.edit_image(args.image, args.prompt, args.output, **generation_kwargs)
+        editor.edit_image(args.image, final_prompt, args.output, **generation_kwargs)
     else:
+        # 배치 처리는 단일 프롬프트만 지원
+        if isinstance(final_prompt, list):
+            print("경고: 배치 처리는 단일 프롬프트만 지원합니다. 첫 번째 프롬프트만 사용합니다.")
+            final_prompt = final_prompt[0]
         editor.batch_edit(
             args.input_folder,
-            args.prompt,
+            final_prompt,
             args.output_folder,
             **generation_kwargs
         )
