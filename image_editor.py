@@ -363,6 +363,7 @@ class QwenImageEditor:
         input_folder: str,
         prompt: str,
         output_folder: str,
+        batch_size: int = 1,
         **kwargs
     ):
         """
@@ -372,6 +373,7 @@ class QwenImageEditor:
             input_folder: 입력 이미지 폴더
             prompt: 편집 프롬프트
             output_folder: 출력 폴더
+            batch_size: 동시 처리할 이미지 수 (Model Parallelism 시 권장: 2-4)
             **kwargs: edit_image에 전달할 추가 파라미터
         """
         input_path = Path(input_folder)
@@ -390,9 +392,13 @@ class QwenImageEditor:
             return
 
         print(f"\n총 {len(image_files)}개의 이미지 처리 시작...")
-        print(f"프롬프트: {prompt}\n")
+        print(f"프롬프트: {prompt}")
+        if batch_size > 1:
+            print(f"배치 크기: {batch_size} (동시에 {batch_size}개씩 처리)\n")
+        else:
+            print()
 
-        # Data Parallelism: 여러 GPU에 이미지 분산 처리
+        # Data Parallelism: 여러 GPU에 이미지 분산 처리 (모델 복사 방식)
         if self.multi_gpu_data and torch.cuda.is_available():
             gpu_count = torch.cuda.device_count()
             if gpu_count > 1:
@@ -400,19 +406,194 @@ class QwenImageEditor:
                 self._batch_edit_parallel(image_files, prompt, output_path, gpu_count, **kwargs)
                 return
 
-        # 단일 GPU 또는 일반 처리
-        for idx, img_file in enumerate(tqdm(image_files, desc="이미지 편집 중")):
-            output_file = output_path / img_file.name
+        # Model Parallelism 배치 처리 또는 일반 처리
+        if batch_size > 1:
+            self._batch_edit_with_batching(image_files, prompt, output_path, batch_size, **kwargs)
+        else:
+            # 단일 이미지씩 처리
+            for idx, img_file in enumerate(tqdm(image_files, desc="이미지 편집 중")):
+                output_file = output_path / img_file.name
+                try:
+                    self.edit_image(
+                        str(img_file),
+                        prompt,
+                        str(output_file),
+                        **kwargs
+                    )
+                except Exception as e:
+                    print(f"\n스킵: {img_file.name} - {e}")
+                    continue
+
+    def _batch_edit_with_batching(
+        self,
+        image_files: List[Path],
+        prompt: str,
+        output_path: Path,
+        batch_size: int,
+        **kwargs
+    ):
+        """
+        배치 추론을 사용한 빠른 처리 (Model Parallelism과 함께 사용)
+
+        Args:
+            image_files: 처리할 이미지 파일 리스트
+            prompt: 편집 프롬프트
+            output_path: 출력 폴더
+            batch_size: 동시 처리할 이미지 수
+            **kwargs: edit_image에 전달할 추가 파라미터
+        """
+        total_images = len(image_files)
+        num_batches = (total_images + batch_size - 1) // batch_size
+
+        print(f"배치 추론 모드: {num_batches}개 배치 (배치당 {batch_size}개 이미지)")
+        if self.multi_gpu_model:
+            print(f"Model Parallelism 활성화: 모델이 여러 GPU에 분산되어 있습니다\n")
+
+        # Lightning 모델 최적화
+        num_steps = kwargs.get("num_inference_steps", 40)
+        if self.is_lightning and num_steps == 40:
+            num_steps = 4
+            kwargs["num_inference_steps"] = 4
+
+        # 배치 단위로 처리
+        for batch_idx in tqdm(range(num_batches), desc="배치 처리 중"):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, total_images)
+            batch_files = image_files[start_idx:end_idx]
+
             try:
-                self.edit_image(
-                    str(img_file),
-                    prompt,
-                    str(output_file),
-                    **kwargs
-                )
+                # 배치 이미지 로드
+                batch_images = []
+                batch_output_paths = []
+                for img_file in batch_files:
+                    try:
+                        image = Image.open(str(img_file)).convert("RGB")
+                        batch_images.append(image)
+                        batch_output_paths.append(output_path / img_file.name)
+                    except Exception as e:
+                        print(f"\n스킵 (로드 실패): {img_file.name} - {e}")
+                        continue
+
+                if not batch_images:
+                    continue
+
+                # 모든 이미지가 같은 크기인지 확인 (다르면 개별 처리)
+                sizes = [img.size for img in batch_images]
+                if len(set(sizes)) > 1:
+                    # 크기가 다르면 개별 처리
+                    for img, img_file, out_path in zip(batch_images, batch_files, batch_output_paths):
+                        try:
+                            self._process_single_image(
+                                img, prompt, out_path, num_steps, **kwargs
+                            )
+                        except Exception as e:
+                            print(f"\n스킵: {img_file.name} - {e}")
+                            continue
+                else:
+                    # 같은 크기면 배치 처리
+                    self._process_batch_images(
+                        batch_images, prompt, batch_output_paths, num_steps, **kwargs
+                    )
+
             except Exception as e:
-                print(f"\n스킵: {img_file.name} - {e}")
-                continue
+                print(f"\n배치 {batch_idx + 1} 처리 실패: {e}")
+                # 실패한 배치는 개별 처리
+                for img_file in batch_files:
+                    try:
+                        output_file = output_path / img_file.name
+                        self.edit_image(
+                            str(img_file),
+                            prompt,
+                            str(output_file),
+                            **kwargs
+                        )
+                    except Exception as e2:
+                        print(f"\n스킵: {img_file.name} - {e2}")
+                        continue
+
+    def _process_single_image(
+        self,
+        image: Image.Image,
+        prompt: str,
+        output_path: Path,
+        num_steps: int,
+        **kwargs
+    ):
+        """단일 이미지 처리 헬퍼 함수"""
+        original_width, original_height = image.size
+
+        # 생성기 설정
+        generator = None
+        seed = kwargs.get("seed")
+        if seed is not None:
+            generator = torch.manual_seed(seed)
+
+        # 파이프라인 입력 준비
+        inputs = {
+            "image": [image],
+            "prompt": prompt,
+            "negative_prompt": kwargs.get("negative_prompt", " "),
+            "num_inference_steps": num_steps,
+            "guidance_scale": kwargs.get("guidance_scale", 1.0),
+            "true_cfg_scale": kwargs.get("true_cfg_scale", 4.0),
+            "num_images_per_prompt": 1,
+            "height": kwargs.get("target_height", original_height),
+            "width": kwargs.get("target_width", original_width),
+        }
+        if generator is not None:
+            inputs["generator"] = generator
+
+        # 이미지 생성
+        with torch.inference_mode():
+            output = self.pipeline(**inputs)
+            output_image = output.images[0]
+
+        # 저장
+        output_image.save(str(output_path))
+
+    def _process_batch_images(
+        self,
+        images: List[Image.Image],
+        prompt: str,
+        output_paths: List[Path],
+        num_steps: int,
+        **kwargs
+    ):
+        """배치 이미지 처리 헬퍼 함수"""
+        if not images:
+            return
+
+        # 첫 번째 이미지 크기 사용 (모두 같은 크기여야 함)
+        original_width, original_height = images[0].size
+
+        # 생성기 설정
+        generator = None
+        seed = kwargs.get("seed")
+        if seed is not None:
+            generator = torch.manual_seed(seed)
+
+        # 파이프라인 입력 준비
+        inputs = {
+            "image": images,  # 여러 이미지를 리스트로 전달
+            "prompt": prompt,
+            "negative_prompt": kwargs.get("negative_prompt", " "),
+            "num_inference_steps": num_steps,
+            "guidance_scale": kwargs.get("guidance_scale", 1.0),
+            "true_cfg_scale": kwargs.get("true_cfg_scale", 4.0),
+            "num_images_per_prompt": 1,
+            "height": kwargs.get("target_height", original_height),
+            "width": kwargs.get("target_width", original_width),
+        }
+        if generator is not None:
+            inputs["generator"] = generator
+
+        # 배치 이미지 생성
+        with torch.inference_mode():
+            output = self.pipeline(**inputs)
+
+        # 결과 저장
+        for output_image, out_path in zip(output.images, output_paths):
+            output_image.save(str(out_path))
 
     def _batch_edit_parallel(
         self,
@@ -712,6 +893,12 @@ def main():
         help="Data Parallelism: 배치를 여러 GPU에 분산 (병렬 추론, ~30GB 모델용)"
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="배치 크기 (Model Parallelism 시 권장: 2-4, 기본값: 1)"
+    )
+    parser.add_argument(
         "--lora-path",
         type=str,
         default=None,
@@ -839,6 +1026,7 @@ def main():
             args.input_folder,
             final_prompt,
             args.output_folder,
+            batch_size=args.batch_size,
             **generation_kwargs
         )
 
