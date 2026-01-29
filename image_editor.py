@@ -282,6 +282,13 @@ class QwenImageEditor:
             original_width, original_height = input_image.size
             print(f"입력 이미지 크기: {original_width}x{original_height}")
 
+            # 대용량 이미지 경고 (CUDA 메모리 문제 예방)
+            total_pixels = original_width * original_height
+            if total_pixels > 2048 * 2048:
+                print(f"경고: 이미지 크기가 큽니다 ({total_pixels:,} 픽셀). "
+                      f"CUDA 메모리 오류가 발생할 수 있습니다.")
+                print(f"       권장: 2048x2048 이하 또는 --height/--width 옵션으로 크기 조정")
+
             # 출력 크기 결정
             if maintain_aspect_ratio and (target_height is None or target_width is None):
                 output_height = target_height if target_height is not None else original_height
@@ -313,14 +320,21 @@ class QwenImageEditor:
                     "prompt": single_prompt,
                     "negative_prompt": negative_prompt,
                     "num_inference_steps": num_inference_steps,
-                    "guidance_scale": guidance_scale,
                     "true_cfg_scale": true_cfg_scale,
                     "num_images_per_prompt": num_images_per_prompt,
                     "height": output_height,
                     "width": output_width,
                 }
+                # guidance_scale은 guidance-distilled 모델에서만 사용됨
+                # 1.0이 아닌 경우에만 전달 (경고 방지)
+                if guidance_scale != 1.0:
+                    inputs["guidance_scale"] = guidance_scale
                 if generator is not None:
                     inputs["generator"] = generator
+
+                # CUDA 메모리 정리 (대용량 이미지 처리 시 메모리 단편화 방지)
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
 
                 # 이미지 생성
                 print(f"이미지 생성 중... (steps: {num_inference_steps})")
@@ -352,10 +366,21 @@ class QwenImageEditor:
                     output_image.save(str(final_path))
                     print(f"저장 완료: {os.path.abspath(final_path)}")
 
+                # 각 프롬프트 처리 후 메모리 정리
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
+
         except Exception as e:
             print(f"에러: 이미지 편집 실패 - {e}")
             import traceback
             traceback.print_exc()
+            # CUDA 오류 시 메모리 정리 시도
+            if self.device == "cuda":
+                try:
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                except:
+                    pass
             raise
 
     def batch_edit(
@@ -420,6 +445,25 @@ class QwenImageEditor:
                         str(output_file),
                         **kwargs
                     )
+                except RuntimeError as e:
+                    error_msg = str(e)
+                    print(f"\n스킵: {img_file.name} - {e}")
+                    # CUDA 오류 발생 시 GPU 상태 복구 시도
+                    if "CUDA" in error_msg or "illegal memory access" in error_msg:
+                        print("CUDA 오류 감지. GPU 상태 복구 시도 중...")
+                        try:
+                            torch.cuda.synchronize()
+                            torch.cuda.empty_cache()
+                            # CUDA 컨텍스트 재설정을 위한 더미 연산
+                            if torch.cuda.is_available():
+                                _ = torch.zeros(1, device="cuda")
+                                del _
+                                torch.cuda.empty_cache()
+                            print("GPU 상태 복구 완료. 다음 이미지 처리 계속...")
+                        except Exception as cuda_e:
+                            print(f"GPU 상태 복구 실패: {cuda_e}")
+                            print("프로그램을 재시작하거나 이미지 크기를 줄여주세요.")
+                    continue
                 except Exception as e:
                     print(f"\n스킵: {img_file.name} - {e}")
                     continue
@@ -534,14 +578,21 @@ class QwenImageEditor:
             "prompt": prompt,
             "negative_prompt": kwargs.get("negative_prompt", " "),
             "num_inference_steps": num_steps,
-            "guidance_scale": kwargs.get("guidance_scale", 1.0),
             "true_cfg_scale": kwargs.get("true_cfg_scale", 4.0),
             "num_images_per_prompt": 1,
             "height": kwargs.get("target_height", original_height),
             "width": kwargs.get("target_width", original_width),
         }
+        # guidance_scale은 guidance-distilled 모델에서만 사용됨
+        guidance_scale = kwargs.get("guidance_scale", 1.0)
+        if guidance_scale != 1.0:
+            inputs["guidance_scale"] = guidance_scale
         if generator is not None:
             inputs["generator"] = generator
+
+        # CUDA 메모리 정리
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # 이미지 생성
         with torch.inference_mode():
@@ -550,6 +601,10 @@ class QwenImageEditor:
 
         # 저장
         output_image.save(str(output_path))
+
+        # 메모리 정리
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _process_batch_images(
         self,
@@ -578,14 +633,21 @@ class QwenImageEditor:
             "prompt": prompt,
             "negative_prompt": kwargs.get("negative_prompt", " "),
             "num_inference_steps": num_steps,
-            "guidance_scale": kwargs.get("guidance_scale", 1.0),
             "true_cfg_scale": kwargs.get("true_cfg_scale", 4.0),
             "num_images_per_prompt": 1,
             "height": kwargs.get("target_height", original_height),
             "width": kwargs.get("target_width", original_width),
         }
+        # guidance_scale은 guidance-distilled 모델에서만 사용됨
+        guidance_scale = kwargs.get("guidance_scale", 1.0)
+        if guidance_scale != 1.0:
+            inputs["guidance_scale"] = guidance_scale
         if generator is not None:
             inputs["generator"] = generator
+
+        # CUDA 메모리 정리
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # 배치 이미지 생성
         with torch.inference_mode():
@@ -594,6 +656,10 @@ class QwenImageEditor:
         # 결과 저장
         for output_image, out_path in zip(output.images, output_paths):
             output_image.save(str(out_path))
+
+        # 메모리 정리
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _batch_edit_parallel(
         self,
@@ -755,12 +821,18 @@ def _process_images_on_gpu(
                     "prompt": prompt,
                     "negative_prompt": kwargs.get("negative_prompt", " "),
                     "num_inference_steps": kwargs.get("num_inference_steps", 40),
-                    "guidance_scale": kwargs.get("guidance_scale", 1.0),
                     "true_cfg_scale": kwargs.get("true_cfg_scale", 4.0),
                     "num_images_per_prompt": kwargs.get("num_images_per_prompt", 1),
                 }
+                # guidance_scale은 guidance-distilled 모델에서만 사용됨
+                guidance_scale = kwargs.get("guidance_scale", 1.0)
+                if guidance_scale != 1.0:
+                    inputs["guidance_scale"] = guidance_scale
                 if generator is not None:
                     inputs["generator"] = generator
+
+                # CUDA 메모리 정리
+                torch.cuda.empty_cache()
 
                 # 이미지 생성
                 with torch.inference_mode():
@@ -769,6 +841,9 @@ def _process_images_on_gpu(
 
                 # 저장
                 output_image.save(str(output_file))
+
+                # 메모리 정리
+                torch.cuda.empty_cache()
 
             except Exception as e:
                 print(f"\n[GPU {gpu_id}] 스킵: {img_file.name} - {e}")
